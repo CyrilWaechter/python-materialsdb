@@ -9,6 +9,7 @@ python-materialsdb is python api for [materialsdb.org][1]
 
 # Dependencies
 * [lxml][2] (BSD) : xml parser
+* [ifcopenshell][3] (LGPL) : ifc read/write
 
 # Third parties :
 * [materialsdb.org][1] (GPL) : materials schema
