@@ -1,12 +1,13 @@
 import uuid
 import datetime
 import json
+from pathlib import Path
 import ifcopenshell
 import ifcopenshell.api
 
-from serialiser import XmlDeserialiser
-
-from classes import *
+from materialsdb.serialiser import XmlDeserialiser
+from materialsdb import config
+from materialsdb.classes import Material, TLocalizedString, Webinfo, ISO639_1, Mimetype
 
 CATEGORIES = {
     "Others": {"hatch": "", "color": (255, 255, 255)},
@@ -41,9 +42,8 @@ def clean_psets(psets):
     return new_dict
 
 
-with open("material_psets.json", "r") as f:
-    PSETS = json.load(f)
-    PSETS = clean_psets(PSETS)
+PSETS = json.loads(Path(__file__).with_name("material_psets.json").read_text("utf-8"))
+PSETS = clean_psets(PSETS)
 
 
 def date_from_xml(days: float) -> datetime.datetime:
@@ -66,6 +66,7 @@ def get_by_country(values, country):
         if value.country is None:
             return value
 
+
 def get_value(layer, definition, country=None):
     value = layer
     for attrib in definition["path"]:
@@ -80,8 +81,8 @@ class ProjectLibrary:
         self.file = ifcopenshell.file(schema=schema)
         self.application = self.create_application()
         self.project_library = None
-        self.lang = "fr"
-        self.country = "CH"
+        self.lang = config.get_lang()
+        self.country = config.get_country()
         self.owner_history = None
 
     def create_application(self):

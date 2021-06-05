@@ -14,7 +14,7 @@ from typing import Protocol, Tuple, Dict, Type, Optional, Any
 
 from lxml import objectify, etree
 
-import classes
+from materialsdb import classes
 
 
 class XmlDeserialiser:
