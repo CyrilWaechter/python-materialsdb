@@ -11,7 +11,7 @@ def get_cache_folder():
     cache_dir = pathlib.Path(
         os.environ.get("APPDATA")
         or os.environ.get("XDG_CACHE_HOME")
-        or pathlib.Path(os.environ["HOME"]).joinpath(".cache")
+        or pathlib.Path.home() / ".cache"
     ).joinpath(
         "materialsdb",
     )
@@ -20,7 +20,7 @@ def get_cache_folder():
 
 
 def get_cached_index_path() -> pathlib.Path:
-    return pathlib.Path(get_cache_folder()).joinpath("ProducerIndex.xml")
+    return get_cache_folder() / "ProducerIndex.xml"
 
 
 def parse_cached_index() -> etree._ElementTree:
@@ -62,17 +62,15 @@ def update_producers_data():
     has_index_update = False
     for company in new_root:
         cached_company = get_by_id(cached_root, company.get("id"))
-        if not require_update(cached_company, company):
+        if (
+            not require_update(cached_company, company)
+            and (producers_dir / pathlib.Path(company.get("href")).name).exists()
+        ):
             continue
         if cached_company:
-            try:
-                producers_dir.joinpath(
-                    pathlib.Path(cached_company.get("href")).name
-                ).unlink()
-            except FileNotFoundError:
-                pass
+            (producers_dir / pathlib.Path(cached_company.get("href")).name).unlink(True)
         has_index_update = True
-        producer_path = producers_dir.joinpath(pathlib.Path(company.get("href")).name)
+        producer_path = producers_dir / pathlib.Path(company.get("href")).name
         urllib.request.urlretrieve(company.get("href"), producer_path)
     if has_index_update:
         new_index.write(get_cached_index_path())
