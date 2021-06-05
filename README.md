@@ -16,3 +16,4 @@ python-materialsdb is python api for [materialsdb.org][1]
 
 [1]: http://www.materialsdb.org
 [2]: https://lxml.de
+[3]: ifcopenshell.org
