@@ -76,6 +76,11 @@ def update_producers_data():
         new_index.write(get_cached_index_path())
 
 
+def producers():
+    for producer in get_producers_dir().glob("*.xml"):
+        yield producer
+
+
 def main():
     update_producers_data()
 
