@@ -23,15 +23,15 @@ def get_xml_schema() -> str:
 
 
 class XmlDeserialiser:
-    def __init__(self, xml_path):
+    def __init__(self):
         self.schema = etree.XMLSchema(file=get_xml_schema())
         self.parser = objectify.makeparser(schema=self.schema)
-        self.xml_obj = objectify.parse(xml_path, self.parser)
-        self.root = self.xml_obj.getroot()
 
-    def from_xml(self, element=None, base_class=None):
-        if element is None:
-            element = self.root
+    def from_xml(self, xml_path: str):
+        xml_obj = objectify.parse(xml_path, self.parser)
+        return self.from_element(xml_obj.getroot())
+
+    def from_element(self, element=None, base_class=None):
         element_name = re.search("{.*}(.*)", element.tag).group(1)
         element_class = base_class or getattr(classes, self.cls_name(element_name))
         kwargs: Dict[str, Any] = {}
@@ -52,12 +52,12 @@ class XmlDeserialiser:
                 value = []
                 inner_type = typing.get_args(base_class)[0]
                 for child in getattr(element, child_name, ()):
-                    value.append(self.from_xml(child, inner_type))
+                    value.append(self.from_element(child, inner_type))
                 kwargs[child_name] = value
             else:
                 child = getattr(element, child_name, None)
                 if child is not None:
-                    kwargs[child_name] = self.from_xml(child, base_class)
+                    kwargs[child_name] = self.from_element(child, base_class)
 
         return element_class(**kwargs)
 
