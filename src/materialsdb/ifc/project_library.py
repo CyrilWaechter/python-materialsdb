@@ -7,7 +7,14 @@ import ifcopenshell.api
 
 from materialsdb.serialiser import XmlDeserialiser
 from materialsdb import config
-from materialsdb.classes import Material, TLocalizedString, Webinfo, ISO639_1, Mimetype
+from materialsdb.classes import (
+    Materials,
+    Material,
+    TLocalizedString,
+    Webinfo,
+    ISO639_1,
+    Mimetype,
+)
 
 CATEGORIES = {
     "Others": {"hatch": "", "color": (255, 255, 255)},
