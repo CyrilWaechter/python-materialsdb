@@ -9,6 +9,7 @@ See the LICENSE.md file for more details.
 Author : Cyril Waechter
 """
 import re
+from pathlib import Path
 import typing
 from typing import Protocol, Tuple, Dict, Type, Optional, Any
 
@@ -17,10 +18,13 @@ from lxml import objectify, etree
 from materialsdb import classes
 
 
+def get_xml_schema() -> str:
+    return str(Path(__file__).parent / "schema/materialsdb103.xsd")
+
+
 class XmlDeserialiser:
     def __init__(self, xml_path):
-        xml_schema = "materialsdb103.xsd"
-        self.schema = etree.XMLSchema(file=xml_schema)
+        self.schema = etree.XMLSchema(file=get_xml_schema())
         self.parser = objectify.makeparser(schema=self.schema)
         self.xml_obj = objectify.parse(xml_path, self.parser)
         self.root = self.xml_obj.getroot()
@@ -52,7 +56,7 @@ class XmlDeserialiser:
                 kwargs[child_name] = value
             else:
                 child = getattr(element, child_name, None)
-                if child:
+                if child is not None:
                     kwargs[child_name] = self.from_xml(child, base_class)
 
         return element_class(**kwargs)
@@ -73,8 +77,7 @@ class XmlDeserialiser:
 
 class XmlSerialiser:
     def __init__(self):
-        xml_schema = "materialsdb103.xsd"
-        self.schema = etree.XMLSchema(file=xml_schema)
+        self.schema = etree.XMLSchema(file=get_xml_schema())
         self.parser = objectify.makeparser(schema=self.schema)
         nsmap = {
             None: "http://www.materialsdb.org",
@@ -124,9 +127,9 @@ class XmlSerialiser:
 
 def main():
     xml_path = "example_v103.xml"
-    deserialiser = XmlDeserialiser(xml_path)
+    deserialiser = XmlDeserialiser()
     sources = []
-    sources.append(deserialiser.from_xml())
+    sources.append(deserialiser.from_xml(xml_path))
     serialiser = XmlSerialiser()
     serialiser.to_xml(sources[0], xml_path="test.xml")
 
