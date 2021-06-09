@@ -80,6 +80,8 @@ def get_value(layer, definition, country=None):
         value = getattr(value, attrib)
         if isinstance(value, list):
             value = get_by_country(value, country)
+            if not value:
+                return None
     return value
 
 
@@ -207,7 +209,7 @@ class ProjectLibrary:
                         Material=ifc_material,
                     )
                 geometry = get_by_country(layer.geometry, self.country)
-                if geometry.thick:
+                if getattr(geometry, "thick", None):
                     element_name = name + f" | {geometry.thick}mm"
                     assigned_material = file.create_entity(
                         "IfcMaterialLayer",

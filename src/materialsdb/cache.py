@@ -73,12 +73,13 @@ def update_producers_data():
         producer_path = producers_dir / pathlib.Path(company.get("href")).name
         urllib.request.urlretrieve(company.get("href"), producer_path)
     if has_index_update:
-        new_index.write(get_cached_index_path())
+        new_index.write(str(get_cached_index_path()))
 
 
 def producers():
-    for producer in get_producers_dir().glob("*.xml"):
-        yield producer
+    for producer in get_producers_dir().iterdir():
+        if producer.suffix.lower() == ".xml":
+            yield producer
 
 
 def main():
