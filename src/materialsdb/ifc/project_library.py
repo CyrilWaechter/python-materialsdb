@@ -211,11 +211,16 @@ class ProjectLibrary:
                 geometry = get_by_country(layer.geometry, self.country)
                 if getattr(geometry, "thick", None):
                     element_name = name + f" | {geometry.thick}mm"
-                    assigned_material = file.create_entity(
+                    ifc_layer = file.create_entity(
                         "IfcMaterialLayer",
                         Material=ifc_material,
-                        LayerThickness=geometry.thick,
+                        LayerThickness=geometry.thick / 1000,
                         Name=element_name,
+                    )
+                    assigned_material = file.create_entity(
+                        "IfcMaterialLayerSet",
+                        MaterialLayers=[ifc_layer],
+                        LayerSetName=element_name,
                     )
                 else:
                     element_name = name
@@ -327,14 +332,18 @@ def get_material_webinfo(material: Material, lang: str) -> Webinfo:
     return webinfo
 
 
-def main():
-    xml_path = "example_v103.xml"
-    deserialiser = XmlDeserialiser(xml_path)
-    source = deserialiser.from_xml()
+def create_project_library_from_xml(xml_path):
     library = ProjectLibrary()
+    deserialiser = XmlDeserialiser()
+    source = deserialiser.from_xml(str(xml_path))
     library.create_project_library(source)
     library.create_materials(source)
-    library.file.write("example_v103.ifc")
+    return library.file
+
+
+def main():
+    file = create_project_library_from_xml("example_v103.xml")
+    file.write("example_v103.xml")
 
 
 if __name__ == "__main__":
