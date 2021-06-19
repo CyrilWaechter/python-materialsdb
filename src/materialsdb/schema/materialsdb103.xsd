@@ -668,7 +668,7 @@ version="1.03">
         <xs:extension base="xs:string">
           <xs:attribute name='country' type="ISO_3166_1_alpha_2" use='optional'/>
           <xs:attribute name='lang'  type="ISO639_1" use='optional'/>
-          <xs:attribute name="mime" type="mimetype" use="required"/>
+          <xs:attribute name="mime" type="mimetype" use="optional"/>
           <xs:attribute name="size" type="xs:float" use="optional"/>
           <xs:attribute name='title' type="xs:string" use='optional'/>
           <xs:attribute name="href" type="xs:anyURI" use="required"/>
@@ -702,9 +702,9 @@ version="1.03">
   <xs:element name='layer'>
     <xs:complexType>
       <xs:sequence>
-        <xs:element ref='geometry' maxOccurs='unbounded'/>
-        <xs:element ref='thermal' maxOccurs='unbounded'/>
-        <xs:element ref='physical' maxOccurs='unbounded'/>
+        <xs:element ref='geometry' minOccurs='0' maxOccurs='unbounded'/>
+        <xs:element ref='thermal' minOccurs='0' maxOccurs='unbounded'/>
+        <xs:element ref='physical' minOccurs='0' maxOccurs='unbounded'/>
         <xs:element ref='security' minOccurs='0' maxOccurs='unbounded'/>
         <xs:element ref='acoustic' minOccurs='0' maxOccurs='unbounded'/>
         <xs:element ref='other' minOccurs='0' maxOccurs='unbounded'/>
@@ -812,6 +812,7 @@ version="1.03">
 	    <xs:element ref='lcaversion' minOccurs='0' maxOccurs='unbounded'/>
       </xs:sequence>
 	  <xs:attribute name='database' type="TLCADB" use='required'/>	
+	  <xs:attribute name='luxInsulation' type="guid" use='optional'/>
     </xs:complexType>
   </xs:element> 
   <xs:element name='lcaversion'>	  
@@ -901,6 +902,7 @@ version="1.03">
 	    <xs:element ref='lcaversion' minOccurs='0' maxOccurs='unbounded'/>
       </xs:sequence>
 	  <xs:attribute name='database' type="TLCADB" use='required'/>	
+	  <xs:attribute name='luxInsulation' type="guid" use='optional'/>	
     </xs:complexType>
   </xs:element> 
   <xs:element name='vother'>
