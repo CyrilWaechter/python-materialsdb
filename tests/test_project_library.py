@@ -1,4 +1,3 @@
-from materialsdb.serialiser import XmlDeserialiser
 from materialsdb.ifc import project_library
 
 

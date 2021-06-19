@@ -1,13 +1,7 @@
-import lxml
 from materialsdb import cache
-from materialsdb.serialiser import XmlDeserialiser
-from materialsdb.ifc.project_library import ProjectLibrary
+from materialsdb.ifc import project_library
 
 cache.update_producers_data()
-deserialiser = XmlDeserialiser()
 for producer in cache.producers():
-    source = deserialiser.from_xml(str(producer))
-    library = ProjectLibrary()
-    library.create_project_library(source)
-    library.create_materials(source)
-    library.file.write(producer.with_suffix(".ifc").name)
+    file = project_library.create_project_library_from_xml(str(producer))
+    file.write(producer.with_suffix(".ifc").name)
