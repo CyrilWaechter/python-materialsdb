@@ -239,16 +239,16 @@
     },
     "materialsdb.org_layer": {
         "id": {
-            "path": "id",
-            "primary_measure_type": null
+            "path": ["id"],
+            "primary_measure_type": "IfcIdentifier"
         },
         "aliases": {
-            "path": "aliases",
-            "primary_measure_type": null
+            "path": ["aliases"],
+            "primary_measure_type": "IfcLabel"
         },
         "displayorder": {
-            "path": "displayorder",
-            "primary_measure_type": null
+            "path": ["displayorder"],
+            "primary_measure_type": "IfcInteger"
         }
     },
     "materialsdb.org_thermal": {
@@ -258,7 +258,7 @@
                 "lambda_value_dry"
             ],
             "unit_factor": null,
-            "primary_measure_type": null
+            "primary_measure_type": "IfcThermalConductivityMeasure"
         },
         "W80_coef": {
             "path": [

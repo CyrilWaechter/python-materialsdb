@@ -190,7 +190,7 @@ class ProjectLibrary:
                             continue
                         value = get_value(layer, definition, self.country)
                         if value:
-                            unit_factor = definition["unit_factor"] or 1
+                            unit_factor = definition.get("unit_factor", None) or 1
                             properties.append(
                                 file.create_entity(
                                     "IfcPropertySingleValue",
