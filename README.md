@@ -1,4 +1,4 @@
-python-materialsdb is an unofficial python library for [materialsdb.org][1] open standard.
+python-materialsdb is an unofficial python library for [materialsdb.org][1] an open format and database for building materials.
 
 # Features :
 ## Package
@@ -27,6 +27,12 @@ Note: in materialsdb standard languages are [ISO 639-1](https://en.wikipedia.org
 Check out some [examples](examples):
 * [Convert lastest materials data to ifc](examples/generate_ifc_project_libraries.py)
 * [Create your own materialsdb.org compliant XML](examples/create_layers.py)
+
+# How to install
+## Using pip
+```bash
+pip install python-materialsdb
+```
 
 # Dependencies
 * [lxml][2] (BSD) : xml parser
