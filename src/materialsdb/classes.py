@@ -228,11 +228,11 @@ class Explanations:
 
 @dataclass
 class Webinfo:
-    mime: Mimetype
     href: str
     xs_type: str = "element"
     country: Optional[ISO_3166_1_alpha_2] = None
     lang: Optional[ISO639_1] = None
+    mime: Optional[Mimetype] = None
     size: Optional[float] = None
     title: Optional[str] = None
     xml_attributes: Tuple[str, ...] = ('country', 'lang', 'mime', 'size', 'title', 'href')
@@ -419,7 +419,8 @@ class Lcaversion:
 class Lca:
     database: TLCADB
     xs_type: str = "element"
-    xml_attributes: Tuple[str, ...] = ('database',)
+    luxInsulation: Optional[Guid] = None
+    xml_attributes: Tuple[str, ...] = ('database', 'luxInsulation')
     lcaversion: Optional[List[Lcaversion]] = None
     xml_name = "lca"
     xml_elements: Tuple[str, ...] = ('lcaversion',)
@@ -441,13 +442,13 @@ class Emission:
 @dataclass
 class Layer:
     id: Guid
-    geometry: List[Geometry]
-    thermal: List[Thermal]
-    physical: List[Physical]
     xs_type: str = "element"
     aliases: Optional[str] = None
     displayorder: Optional[int] = None
     xml_attributes: Tuple[str, ...] = ('id', 'aliases', 'displayorder')
+    geometry: Optional[List[Geometry]] = None
+    thermal: Optional[List[Thermal]] = None
+    physical: Optional[List[Physical]] = None
     security: Optional[List[Security]] = None
     acoustic: Optional[List[Acoustic]] = None
     other: Optional[List[Other]] = None
@@ -544,7 +545,8 @@ class Vlcia:
 class Vlca:
     database: TLCADB
     xs_type: str = "element"
-    xml_attributes: Tuple[str, ...] = ('database',)
+    luxInsulation: Optional[Guid] = None
+    xml_attributes: Tuple[str, ...] = ('database', 'luxInsulation')
     lcaversion: Optional[List[Lcaversion]] = None
     xml_name = "vlca"
     xml_elements: Tuple[str, ...] = ('lcaversion',)

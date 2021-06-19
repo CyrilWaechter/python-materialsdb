@@ -8,9 +8,7 @@ See the LICENSE.md file for more details.
 
 Author : Cyril Waechter
 """
-import os
-import pathlib
-import queue
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any
 from lxml import etree
@@ -32,7 +30,7 @@ class PyAttr:
 
 
 class XsdExtractor:
-    def __init__(self, xml_schema):
+    def __init__(self, xml_schema: str):
         xml_obj = objectify.parse(xml_schema)
         self.root = xml_obj.getroot()
         self.file = None
@@ -269,7 +267,7 @@ class {cls_name}:
 
 
 def main():
-    xml_schema = "materialsdb103.xsd"
+    xml_schema = str(Path("../src/materialsdb/schema/materialsdb103.xsd"))
     xsd_extractor = XsdExtractor(xml_schema)
     xsd_extractor.parse_schema()
 
