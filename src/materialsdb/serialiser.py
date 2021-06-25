@@ -55,7 +55,7 @@ class XmlDeserialiser:
         self.schema = etree.XMLSchema(file=get_xml_schema())
         self.parser = objectify.makeparser(schema=self.schema)
 
-    def from_xml(self, xml_path: str, assert_schema: bool = False):
+    def from_xml(self, xml_path: str, assert_schema: bool = False) -> classes.Materials:
         if assert_schema:
             tree = objectify.parse(xml_path, self.parser)
         else:
