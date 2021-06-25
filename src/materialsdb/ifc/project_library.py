@@ -6,14 +6,10 @@ import ifcopenshell
 import ifcopenshell.api
 
 from materialsdb.serialiser import XmlDeserialiser
-from materialsdb import config
+from materialsdb import config, utils
 from materialsdb.classes import (
     Materials,
     Material,
-    TLocalizedString,
-    Webinfo,
-    ISO639_1,
-    Mimetype,
 )
 
 CATEGORIES = {
@@ -53,33 +49,12 @@ PSETS = json.loads(Path(__file__).with_name("material_psets.json").read_text("ut
 PSETS = clean_psets(PSETS)
 
 
-def date_from_xml(days: float) -> datetime.datetime:
-    """Convert days since 30.12.1899 which is materialsdb xml convention to datetime"""
-    return datetime.datetime(1899, 12, 30) + datetime.timedelta(days=days)
-
-
-def date_to_xml(date: datetime.datetime) -> float:
-    """Convert datetime to days since 30.12.1899 which is materialsdb xml convention
-    >>> datetime.timedelta(days=1).total_seconds()
-    86400.0"""
-    return (date - datetime.datetime(1899, 12, 30)).total_seconds() / 86400
-
-
-def get_by_country(values, country):
-    for value in values:
-        if value.country == country:
-            return value
-    for value in values:
-        if value.country is None:
-            return value
-
-
 def get_value(layer, definition, country=None):
     value = layer
     for attrib in definition["path"]:
         value = getattr(value, attrib)
         if isinstance(value, list):
-            value = get_by_country(value, country)
+            value = utils.get_by_country(value, country)
             if not value:
                 return None
     return value
@@ -147,7 +122,7 @@ class ProjectLibrary:
         owner_history = file.createIfcOwnerHistory(
             OwningUser=person_and_organisation,
             OwningApplication=self.application,
-            CreationDate=int(date_from_xml(source.crd).timestamp()),
+            CreationDate=int(utils.date_from_xml(source.crd).timestamp()),
         )
         self.owner_history = owner_history
 
@@ -164,10 +139,10 @@ class ProjectLibrary:
     def create_materials(self, source: Materials):
         file = self.file
         context = file.createIfcRepresentationContext()
-        for material in source.material:
-            name = get_material_name(material, self.lang)
-            description = get_material_description(material, self.lang)
-            webinfo = get_material_webinfo(material, self.lang)
+        for material in utils.get_materials(source, self.country):
+            name = utils.get_material_name(material, self.lang)
+            description = utils.get_material_description(material, self.lang)
+            webinfo = utils.get_material_webinfo(material, self.lang)
             category = material.information.group
             labels = material.information.labels
             color = material.information.color
@@ -208,7 +183,7 @@ class ProjectLibrary:
                         Properties=properties,
                         Material=ifc_material,
                     )
-                geometry = get_by_country(layer.geometry, self.country)
+                geometry = utils.get_by_country(layer.geometry, self.country)
                 if getattr(geometry, "thick", None):
                     element_name = name + f" | {geometry.thick}mm"
                     ifc_layer = file.create_entity(
@@ -304,32 +279,6 @@ class ProjectLibrary:
         return self.file.createIfcColourRgb(
             Blue=color & 255, Green=(color >> 8) & 255, Red=(color >> 16) & 255
         )
-
-
-def get_material_name(material: Material, lang: str) -> TLocalizedString:
-    name = TLocalizedString("")
-    for name in material.information.names.name:
-        if name.lang == lang:
-            return name
-    return name
-
-
-def get_material_description(material: Material, lang: str) -> TLocalizedString:
-    description = TLocalizedString("")
-    explanations = getattr(material.information, "explanations", None)
-    for description in getattr(explanations, "explanation", ()):
-        if description.lang == lang:
-            return description
-    return description
-
-
-def get_material_webinfo(material: Material, lang: str) -> Webinfo:
-    webinfo = Webinfo(Mimetype(""), "", "", lang=ISO639_1(lang))
-    webinfos = getattr(material.information, "webinfos", None)
-    for webinfo in getattr(webinfos, "webinfo", ()):
-        if webinfo.lang == lang:
-            return webinfo
-    return webinfo
 
 
 def create_project_library_from_xml(xml_path):
