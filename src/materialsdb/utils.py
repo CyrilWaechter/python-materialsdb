@@ -58,7 +58,7 @@ def get_materials(
 def get_material_name(material: Material, lang: str) -> TLocalizedString:
     name = TLocalizedString("")
     for name in material.information.names.name:
-        if name.lang == lang:
+        if name.lang == lang or not name.lang:
             return name
     return name
 
