@@ -185,7 +185,7 @@ class ProjectLibrary:
                     )
                 geometry = utils.get_by_country(layer.geometry, self.country)
                 if getattr(geometry, "thick", None):
-                    element_name = name + f" | {geometry.thick}mm"
+                    element_name = f"{name} | {geometry.thick}mm"
                     ifc_layer = file.create_entity(
                         "IfcMaterialLayer",
                         Material=ifc_material,
