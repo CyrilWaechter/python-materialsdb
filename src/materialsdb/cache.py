@@ -1,6 +1,7 @@
 import os
 import pathlib
 import urllib.request
+from collections import namedtuple
 from typing import Optional
 from lxml import etree
 
@@ -78,7 +79,8 @@ def update_producers_data():
         updated.append(producer_path)
     if has_index_update:
         new_index.write(str(get_cached_index_path()))
-    return {"existing": existing, "updated": updated, "deleted": deleted}
+    Report = namedtuple("Report", ["existing", "updated", "deleted"])
+    return Report(existing, updated, deleted)
 
 
 def producers():
