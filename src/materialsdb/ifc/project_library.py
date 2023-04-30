@@ -122,7 +122,7 @@ class ProjectLibrary:
         owner_history = file.createIfcOwnerHistory(
             OwningUser=person_and_organisation,
             OwningApplication=self.application,
-            CreationDate=int(utils.date_from_xml(source.crd).timestamp()),
+            CreationDate=max(int(utils.date_from_xml(source.crd).timestamp()),-2147483648),
         )
         self.owner_history = owner_history
 
