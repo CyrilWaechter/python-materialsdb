@@ -25,7 +25,7 @@ Note: in materialsdb standard languages are [ISO 639-1](https://en.wikipedia.org
 
 # Usage examples :
 Check out some [examples](examples):
-* [Convert lastest materials data to ifc](examples/generate_ifc_project_libraries.py)
+* [Convert latest materials data to ifc](examples/generate_ifc_project_libraries.py)
 * [Create your own materialsdb.org compliant XML](examples/create_layers.py)
 
 # How to install
@@ -35,8 +35,8 @@ pip install python-materialsdb
 ```
 
 # Dependencies
-* [lxml][2] (BSD) : xml parser
-* [ifcopenshell][3] (LGPL) : ifc read/write
+* [lxml][2] (BSD) : xml parser (tested with version 6.1.1)
+* [ifcopenshell][3] (LGPL) : ifc read/write (tested with version 0.8.5)
 
 # Third parties :
 * [materialsdb.org][1] (GPL) : materials schema

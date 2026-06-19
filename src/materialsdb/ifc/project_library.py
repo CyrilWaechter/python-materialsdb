@@ -209,7 +209,7 @@ class ProjectLibrary:
                     ifcopenshell.api.run(
                         "material.assign_material",
                         file,
-                        product=wall,
+                        products=[wall],
                         material=assigned_material,
                     )
                 if material.information.roof:
@@ -221,7 +221,7 @@ class ProjectLibrary:
                     ifcopenshell.api.run(
                         "material.assign_material",
                         file,
-                        product=roof,
+                        products=[roof],
                         material=assigned_material,
                     )
                 if material.information.floor:
@@ -233,7 +233,7 @@ class ProjectLibrary:
                     ifcopenshell.api.run(
                         "material.assign_material",
                         file,
-                        product=slab,
+                        products=[slab],
                         material=assigned_material,
                     )
                 if material.information.door:
@@ -245,7 +245,7 @@ class ProjectLibrary:
                     ifcopenshell.api.run(
                         "material.assign_material",
                         file,
-                        product=door,
+                        products=[door],
                         material=assigned_material,
                     )
 

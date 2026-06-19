@@ -75,7 +75,8 @@ def update_producers_data(url_list=MATERIALSDBINDEXURLLIST):
 def update_producers_from_index(index):
     cached_index = parse_cached_index(index)
     cached_root = cached_index.getroot()
-    new_index = etree.parse(index)
+    with urllib.request.urlopen(index) as response:
+        new_index = etree.parse(response)
     new_root = new_index.getroot()
     producers_dir = get_producers_dir()
     has_index_update = False
