@@ -120,3 +120,13 @@ approved — library is pre-1.0). `cache.py` unchanged.
 
 Sub-project 3 (single-material IFC creation) and sub-project 4 (GUI material
 picker) both consume `MaterialStore` unchanged; neither needs to touch parsing.
+
+## Status / deviations recorded during implementation (2026-08-24)
+
+`MaterialStore.refresh()` parses sequentially rather than via
+`serialiser.from_xml_files`: fragment extraction needs the objectify tree per
+file. Measured cold-build went 12.07s → 2.57s, which already meets the goals;
+`from_xml_files` remains available for batch consumers.
+
+`MaterialStore()` does not auto-refresh on construction; an explicit
+`query.refresh()` is the documented contract instead of the §4 sketch comment.

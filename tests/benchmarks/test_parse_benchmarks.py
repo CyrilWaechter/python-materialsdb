@@ -46,7 +46,7 @@ def populated_store(tmp_path_factory):
     store.close()
 
 
-def test_store_rebuild(benchmark, populated_store, tmp_path_factory):
+def test_store_rebuild(benchmark, populated_store):
     benchmark(populated_store.refresh, force=True, paths=[MINI_XML])
 
 

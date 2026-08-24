@@ -53,6 +53,12 @@ def test_sort_order_and_nulls_last(store):
     rows = store.summaries(sort="lambda")
     assert [r.lambda_min for r in rows] == [0.036, 0.21, None]
 
+    rows = store.summaries(sort="lambda", ascending=False)
+    assert [r.lambda_min for r in rows] == [0.21, 0.036, None]
+
+    rows = store.summaries(sort="thick", ascending=False)
+    assert [r.thick_min for r in rows] == [150, 100, None]
+
 
 def test_text_filter_uses_configured_lang(monkeypatch, store):
     monkeypatch.setattr("materialsdb.config.get_lang", lambda: "fr")
@@ -91,6 +97,7 @@ def test_corrupt_producer_is_skipped(store, tmp_path, mini_xml):
     bad.write_text("<materials>", encoding="utf-8")
     report = store.refresh(force=True, paths=[mini_xml, bad])
     assert len(report.existing) + len(report.updated) == 1
+    assert report.skipped == [bad]
     assert len(store.summaries()) == 3
 
 

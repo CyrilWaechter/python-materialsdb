@@ -2,9 +2,15 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent / "src"))
+import pytest
+
 from materialsdb.serialiser import XmlDeserialiser, XmlSerialiser
 
 
+@pytest.mark.skipif(
+    not Path("example_v103.xml").exists(),
+    reason="example_v103.xml not present locally",
+)
 def test_deserialise_and_serialise():
     xml_path = "example_v103.xml"
     deserialiser = XmlDeserialiser()
@@ -20,9 +26,6 @@ def test_mini_fixture_roundtrip(tmp_path, mini_source):
     XmlSerialiser().to_xml(mini_source, xml_path=str(out))
     reparsed = XmlDeserialiser().from_xml(str(out))
     assert len(reparsed.material) == 3
-
-
-import pytest
 
 
 @pytest.mark.skipif(

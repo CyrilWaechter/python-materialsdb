@@ -2,8 +2,9 @@ import datetime
 import hashlib
 import json
 import sqlite3
+from collections import namedtuple
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional
 
 from lxml import etree, objectify
 
@@ -12,7 +13,7 @@ from materialsdb.classes import Material
 from materialsdb.serialiser import XmlDeserialiser, get_valid_root
 from materialsdb.summary import MaterialSummary, summarize_material
 
-Report = cache.Report
+Report = namedtuple("Report", ["existing", "updated", "deleted", "skipped"])
 
 SCHEMA_VERSION = "1"
 
@@ -29,6 +30,23 @@ CREATE TABLE IF NOT EXISTS producer_files (
     path TEXT PRIMARY KEY, sha256 TEXT, built_at REAL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
+
+_MATERIAL_COLUMNS = (
+    "id",
+    "company_id",
+    "company",
+    "category",
+    "names",
+    "descriptions",
+    "lambda_min",
+    "lambda_max",
+    "thick_min",
+    "thick_max",
+    "usage",
+    "source_file",
+    "xml",
+)
+_COLUMN_LIST = ", ".join(_MATERIAL_COLUMNS)
 
 _NUMERIC_SORTS = {"lambda": "lambda_min", "thick": "thick_min"}
 _STRING_SORTS = {"company": "company", "category": "category"}
@@ -59,8 +77,9 @@ class MaterialStore:
         ).fetchone()
         stored = row[0] if row else None
         if stored != SCHEMA_VERSION:
-            self.connection.execute("DELETE FROM materials")
-            self.connection.execute("DELETE FROM producer_files")
+            self.connection.execute("DROP TABLE IF EXISTS materials")
+            self.connection.execute("DROP TABLE IF EXISTS producer_files")
+            self.connection.executescript(_SCHEMA)
             self.connection.execute(
                 "INSERT INTO meta(key, value) VALUES ('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -93,7 +112,7 @@ class MaterialStore:
                 )
                 deleted.append(Path(stored_path))
 
-        existing, updated = [], []
+        existing, updated, skipped = [], [], []
         deserialiser = XmlDeserialiser()
         for path in paths:
             row = self.connection.execute(
@@ -107,6 +126,7 @@ class MaterialStore:
                 self._upsert_file(deserialiser, path)
             except Exception as err:
                 print(f"{path.name}: skipped during store refresh:\n\t{err}")
+                skipped.append(path)
                 continue
             self.connection.execute(
                 "INSERT INTO producer_files(path, sha256, built_at) VALUES (?, ?, ?) "
@@ -117,7 +137,7 @@ class MaterialStore:
             updated.append(path)
 
         self.connection.commit()
-        return Report(existing, updated, deleted)
+        return Report(existing, updated, deleted, skipped)
 
     def _upsert_file(self, deserialiser: XmlDeserialiser, path: Path):
         tree = objectify.parse(str(path))
@@ -132,7 +152,8 @@ class MaterialStore:
                 material, company_id=str(source.companyid), company=source.company
             )
             self.connection.execute(
-                "INSERT INTO materials VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO materials ({_COLUMN_LIST}) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     summary.id,
                     summary.company_id,
@@ -185,7 +206,7 @@ class MaterialStore:
         if max_thick is not None:
             add("thick_min<=?", max_thick)
 
-        query = "SELECT * FROM materials"
+        query = f"SELECT {_COLUMN_LIST} FROM materials"
         if where:
             query += " WHERE " + " AND ".join(where)
         rows = self.connection.execute(query, params).fetchall()
@@ -220,7 +241,7 @@ class MaterialStore:
             return sorted(
                 results,
                 key=lambda r: (
-                    getattr(r, attr) is None,
+                    (getattr(r, attr) is None) != reverse,
                     getattr(r, attr) if getattr(r, attr) is not None else 0,
                 ),
                 reverse=reverse,
