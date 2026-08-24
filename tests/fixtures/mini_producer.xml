@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<materials company="Mini SA" companyid="A1B85A67-5B1E-4960-A297-2DE8275049C5" ver="1" crd="43979.7189866898" verXML="3" xmlns="http://www.materialsdb.org">
+  <material id="00000000-0000-0000-0000-000000000001" readonly="1" type="simple">
+    <information group="Insulation" wall="1" color="16711680">
+      <names>
+        <name lang="fr">Isolant A</name>
+        <name lang="de">Daemmstoff A</name>
+        <name>Material A</name>
+      </names>
+      <explanations>
+        <explanation lang="fr">Panneau isolant</explanation>
+        <explanation lang="de">Daemmplatte</explanation>
+      </explanations>
+    </information>
+    <layers>
+      <layer id="00000000-0000-0000-0000-0000000000a1">
+        <geometry country="CH" thick="200"/>
+        <thermal country="CH" lambda_value="0.036"/>
+        <geometry country="FR" thick="240"/>
+        <thermal country="FR" lambda_value="0.04"/>
+      </layer>
+      <layer id="00000000-0000-0000-0000-0000000000a2">
+        <geometry thick="100"/>
+        <thermal lambda_value="0.05"/>
+      </layer>
+    </layers>
+  </material>
+  <material id="00000000-0000-0000-0000-000000000002" readonly="1" type="simple">
+    <information group="Concrete">
+      <names>
+        <name lang="fr">Beton B</name>
+      </names>
+    </information>
+    <layers>
+      <layer id="00000000-0000-0000-0000-0000000000b1">
+        <geometry thick="150"/>
+        <thermal country="CH" lambda_value="0.21"/>
+      </layer>
+    </layers>
+  </material>
+  <material id="00000000-0000-0000-0000-000000000003" readonly="1" type="simple">
+    <information group="Others">
+      <names>
+        <name lang="fr">Sans donnees C</name>
+      </names>
+    </information>
+  </material>
+</materials>
