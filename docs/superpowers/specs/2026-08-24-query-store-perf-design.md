@@ -130,3 +130,11 @@ file. Measured cold-build went 12.07s → 2.57s, which already meets the goals;
 
 `MaterialStore()` does not auto-refresh on construction; an explicit
 `query.refresh()` is the documented contract instead of the §4 sketch comment.
+
+Known deferred limitation: `MaterialStore.__init__` runs the schema script
+before the version check, so opening a database whose `materials` table lacks
+an *indexed* column (e.g. after a future schema version adds one) fails at
+`CREATE INDEX` before the drop-and-rebuild path can run. Unreachable while
+schema v1 is the only shipped shape; fix by splitting the script (tables +
+meta first, indexes after `_ensure_schema_version`) when the first real
+schema bump happens.
