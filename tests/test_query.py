@@ -4,6 +4,12 @@ from materialsdb import query
 from materialsdb.store import MaterialStore
 
 
+@pytest.fixture(autouse=True)
+def pinned_fr_ch_config(monkeypatch):
+    monkeypatch.setattr("materialsdb.config.get_lang", lambda: "fr")
+    monkeypatch.setattr("materialsdb.config.get_country", lambda: "CH")
+
+
 @pytest.fixture
 def isolated_store(tmp_path, monkeypatch, mini_xml):
     query.get_store.cache_clear()
