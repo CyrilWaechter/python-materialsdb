@@ -8,3 +8,7 @@ build-backend = "setuptools.build_meta"
 testpaths = [
     "tests",
 ]
+markers = [
+    "benchmark: performance benchmarks (deselected by default)",
+]
+addopts = "-m 'not benchmark'"
