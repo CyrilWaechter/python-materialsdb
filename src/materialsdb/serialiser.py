@@ -9,6 +9,7 @@ See the LICENSE.md file for more details.
 Author : Cyril Waechter
 """
 import re
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 import typing
@@ -67,6 +68,22 @@ class XmlDeserialiser:
         else:
             tree = objectify.parse(xml_path)
         return self.from_element(get_valid_root(tree))
+
+    def from_xml_files(self, paths, max_workers=None):
+        """Parse multiple producer XML files concurrently.
+
+        Yields (path, Materials) per successfully parsed file and
+        (path, None) for files that could not be parsed."""
+
+        def load(path):
+            try:
+                return Path(path), self.from_xml(str(path))
+            except Exception as err:
+                print(f"{Path(path).name}: could not parse file:\n\t{err}")
+                return Path(path), None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            yield from executor.map(load, paths)
 
     def from_element(self, element=None, base_class=None):
         element_name = get_element_name(element)

@@ -38,3 +38,25 @@ def test_type_hints_are_cached():
     hits_after_first = serialiser.cached_type_hints.cache_info().hits
     deserialiser.from_xml("example_v103.xml")
     assert serialiser.cached_type_hints.cache_info().hits > hits_after_first
+
+
+import shutil
+
+
+def test_from_xml_files_reports_corrupt_and_parses_rest(tmp_path, mini_xml):
+    good_a = tmp_path / "a.xml"
+    good_b = tmp_path / "b.xml"
+    bad = tmp_path / "bad.xml"
+    shutil.copy(mini_xml, good_a)
+    shutil.copy(mini_xml, good_b)
+    bad.write_text("<materials><unclosed>", encoding="utf-8")
+
+    results = {
+        path.name: source
+        for path, source in XmlDeserialiser().from_xml_files([good_a, good_b, bad])
+    }
+
+    assert results["a.xml"] is not None
+    assert len(results["a.xml"].material) == 3
+    assert results["b.xml"] is not None
+    assert results["bad.xml"] is None
