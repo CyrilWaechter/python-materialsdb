@@ -3,6 +3,12 @@ import pytest
 from materialsdb.store import MaterialStore
 
 
+@pytest.fixture(autouse=True)
+def pinned_fr_ch_config(monkeypatch):
+    monkeypatch.setattr("materialsdb.config.get_lang", lambda: "fr")
+    monkeypatch.setattr("materialsdb.config.get_country", lambda: "CH")
+
+
 @pytest.fixture
 def store(tmp_path, mini_xml):
     s = MaterialStore(db_path=tmp_path / "test.db")
@@ -85,4 +91,12 @@ def test_corrupt_producer_is_skipped(store, tmp_path, mini_xml):
     bad.write_text("<materials>", encoding="utf-8")
     report = store.refresh(force=True, paths=[mini_xml, bad])
     assert len(report.existing) + len(report.updated) == 1
+    assert len(store.summaries()) == 3
+
+
+def test_nonexistent_producer_is_skipped_without_raising(store, tmp_path, mini_xml):
+    ghost = tmp_path / "ghost.xml"
+    report = store.refresh(paths=[mini_xml, ghost])
+    assert report.existing == [mini_xml]
+    assert report.updated == []
     assert len(store.summaries()) == 3

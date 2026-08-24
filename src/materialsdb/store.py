@@ -96,14 +96,14 @@ class MaterialStore:
         existing, updated = [], []
         deserialiser = XmlDeserialiser()
         for path in paths:
-            digest = _sha256(path)
             row = self.connection.execute(
                 "SELECT sha256 FROM producer_files WHERE path=?", (str(path),)
             ).fetchone()
-            if not force and row and row[0] == digest:
-                existing.append(path)
-                continue
             try:
+                digest = _sha256(path)
+                if not force and row and row[0] == digest:
+                    existing.append(path)
+                    continue
                 self._upsert_file(deserialiser, path)
             except Exception as err:
                 print(f"{path.name}: skipped during store refresh:\n\t{err}")
