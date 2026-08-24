@@ -9,6 +9,7 @@ See the LICENSE.md file for more details.
 Author : Cyril Waechter
 """
 import re
+from functools import lru_cache
 from pathlib import Path
 import typing
 from typing import Protocol, Tuple, Dict, Type, Optional, Any, Union
@@ -50,6 +51,11 @@ def get_valid_root(tree: objectify.ObjectifiedElement) -> str:
     return root
 
 
+@lru_cache(maxsize=None)
+def cached_type_hints(cls) -> dict:
+    return typing.get_type_hints(cls)
+
+
 class XmlDeserialiser:
     def __init__(self):
         self.schema = etree.XMLSchema(file=get_xml_schema())
@@ -68,7 +74,7 @@ class XmlDeserialiser:
         kwargs: Dict[str, Any] = {}
         if element_class.xs_type != "element":
             kwargs["object"] = element.text or ""
-        type_hints = typing.get_type_hints(element_class)
+        type_hints = cached_type_hints(element_class)
         for attrib in getattr(element_class, "xml_attributes", ()):
             value = element.get(attrib)
             if value is None:
