@@ -34,3 +34,25 @@ def test_parse_all_cached_producers(benchmark):
 def test_parse_largest_cached_producer(benchmark):
     largest = max(cache.producers(), key=lambda p: p.stat().st_size)
     benchmark(DESERIALISER.from_xml, str(largest))
+
+
+@pytest.fixture(scope="module")
+def populated_store(tmp_path_factory):
+    from materialsdb.store import MaterialStore
+
+    store = MaterialStore(db_path=tmp_path_factory.mktemp("bench") / "bench.db")
+    store.refresh(paths=[MINI_XML])
+    yield store
+    store.close()
+
+
+def test_store_rebuild(benchmark, populated_store, tmp_path_factory):
+    benchmark(populated_store.refresh, force=True, paths=[MINI_XML])
+
+
+def test_summaries_sorted_by_lambda(benchmark, populated_store):
+    benchmark(populated_store.summaries, sort="lambda")
+
+
+def test_get_single_material(benchmark, populated_store):
+    benchmark(populated_store.get, "00000000-0000-0000-0000-000000000001")

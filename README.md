@@ -28,6 +28,18 @@ Check out some [examples](examples):
 * [Convert latest materials data to ifc](examples/generate_ifc_project_libraries.py)
 * [Create your own materialsdb.org compliant XML](examples/create_layers.py)
 
+# Querying materials :
+The library keeps an sqlite index of the cached materials data for fast
+filtering and single-material access:
+
+```python
+from materialsdb import query
+
+query.refresh()                                   # incremental update from cached xml
+rows = query.search("isolant", sort="lambda")     # filtered, sorted summaries
+material = query.get_material(rows[0].id)         # full material dataclass
+```
+
 # How to install
 ## Using pip
 ```bash
