@@ -57,3 +57,38 @@ target-version = "py310"
 extend-exclude = [
     "src/materialsdb/classes.py",
 ]
+
+[tool.ty.src]
+include = ["src", "tests", "dev_utils", "examples"]
+
+[[tool.ty.overrides]]
+# Generated file: excluded from ruff/ty per Global Constraints (no-drift policy).
+include = ["src/materialsdb/classes.py"]
+[tool.ty.overrides.rules]
+all = "ignore"
+
+[tool.ty.analysis]
+# lxml ships no type information; treat as Any instead of erroring on every use.
+replace-imports-with-any = ["lxml.**"]
+
+[[tool.ty.overrides]]
+# Generator emits dynamic setattr-based classes; ty cannot follow the flow of
+# self.file (assigned inside parse_schema) nor os.startfile (Windows-only).
+include = ["dev_utils/classes_generator.py", "examples/generate_ifc_project_libraries.py"]
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+
+[[tool.ty.overrides]]
+# Examples exercise the generated model whose Optional list fields are
+# populated before use; runtime-valid, inference-hostile.
+include = ["examples/create_layers.py"]
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+possibly-missing-attribute = "ignore"
+
+[[tool.ty.overrides]]
+# ifcopenshell's own annotations disagree with its runtime API here.
+include = ["src/materialsdb/ifc/project_library.py"]
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"

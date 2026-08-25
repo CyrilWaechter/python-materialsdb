@@ -68,7 +68,7 @@ def get_material_description(material: Material, lang: str) -> TLocalizedString:
 
 
 def get_material_webinfo(material: Material, lang: str) -> Webinfo:
-    webinfo = Webinfo(Mimetype(""), "", "", lang=ISO639_1(lang))
+    webinfo = Webinfo(href=Mimetype(""), lang=ISO639_1(lang))
     webinfos = getattr(material.information, "webinfos", None)
     for webinfo in getattr(webinfos, "webinfo", ()):
         if webinfo.lang == lang:

@@ -26,6 +26,7 @@ def isolated_store(tmp_path, monkeypatch, mini_xml):
 
 def test_get_material(isolated_store):
     material = query.get_material("00000000-0000-0000-0000-000000000002")
+    assert material is not None
     assert material.information.group == "Concrete"
 
 

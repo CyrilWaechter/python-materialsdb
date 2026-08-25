@@ -39,7 +39,7 @@ def create_element_maker():
     return objectify.ElementMaker(namespace="http://www.materialsdb.org", nsmap=nsmap, annotate=False)
 
 
-def get_valid_root(tree: objectify.ObjectifiedElement) -> str:
+def get_valid_root(tree: objectify.ObjectifiedElement) -> objectify.ObjectifiedElement:
     root = tree.getroot()
     for attr in ("sig", "publickey"):
         if not hasattr(root, attr):
@@ -82,7 +82,7 @@ class XmlDeserialiser:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             yield from executor.map(load, paths)
 
-    def from_element(self, element=None, base_class=None):
+    def from_element(self, element: Any = None, base_class=None):
         element_name = get_element_name(element)
         element_class = base_class or getattr(classes, self.cls_name(element_name))
         kwargs: dict[str, Any] = {}
