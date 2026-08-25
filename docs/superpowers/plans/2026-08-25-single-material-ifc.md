@@ -349,16 +349,15 @@ class MaterialBuilder:
         return self._context
 
     def _create_identity_pset(self, ifc_material, material, company_id, company, verxml):
-        text = lambda v: _ifc_text(self.file, v)
         properties = [
             self.file.create_entity(
-                "IfcPropertySingleValue", Name="id", NominalValue=text(material.id)
+                "IfcPropertySingleValue", Name="id", NominalValue=_ifc_text(self.file, material.id)
             ),
             self.file.create_entity(
-                "IfcPropertySingleValue", Name="company_id", NominalValue=text(company_id)
+                "IfcPropertySingleValue", Name="company_id", NominalValue=_ifc_text(self.file, company_id)
             ),
             self.file.create_entity(
-                "IfcPropertySingleValue", Name="company", NominalValue=text(company)
+                "IfcPropertySingleValue", Name="company", NominalValue=_ifc_text(self.file, company)
             ),
         ]
         if verxml is not None:
@@ -445,27 +444,11 @@ def purge_material(file, material_entity):  # implemented in Task 3
     raise NotImplementedError
 ```
 
-Add this module-level helper next to `clean_psets` (used by `_create_identity_pset`):
+`_create_identity_pset` relies on this module-level helper next to `clean_psets`:
 
 ```python
 def _ifc_text(file, value):
     return file.create_entity("IfcText", str(value))
-```
-
-Then replace the inner `text = lambda ...` line in `_create_identity_pset` with direct calls - final form of the property list uses `_ifc_text(self.file, ...)` inline:
-
-```python
-        properties = [
-            self.file.create_entity(
-                "IfcPropertySingleValue", Name="id", NominalValue=_ifc_text(self.file, material.id)
-            ),
-            self.file.create_entity(
-                "IfcPropertySingleValue", Name="company_id", NominalValue=_ifc_text(self.file, company_id)
-            ),
-            self.file.create_entity(
-                "IfcPropertySingleValue", Name="company", NominalValue=_ifc_text(self.file, company)
-            ),
-        ]
 ```
 
 - [ ] **Step 3: Refactor project_library.py to delegate**
