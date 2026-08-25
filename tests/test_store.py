@@ -33,6 +33,16 @@ def test_get_unknown_id_returns_none(store):
     assert store.get("nope") is None
 
 
+def test_get_summary_returns_row_summary(store):
+    s = store.get_summary("00000000-0000-0000-0000-000000000001")
+
+    assert s is not None
+    assert s.id == "00000000-0000-0000-0000-000000000001"
+    assert s.company == "Mini SA"
+    assert s.company_id == "A1B85A67-5B1E-4960-A297-2DE8275049C5"
+    assert store.get_summary("missing") is None
+
+
 def test_filters(store):
     insulation = store.summaries(category="Insulation")
     assert len(insulation) == 1

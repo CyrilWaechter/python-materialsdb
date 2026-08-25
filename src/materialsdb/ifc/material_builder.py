@@ -246,3 +246,25 @@ def add_material(file, material, company_id="", company="", verxml=None, replace
             existing = builder.find_existing(str(material.id))
     created = builder.build(material, company_id=company_id, company=company, verxml=verxml)
     return created[0] if created else None
+
+
+def create_material_file(material_id, schema="IFC4", store_=None):
+    from materialsdb import query
+
+    store_ = store_ or query.get_store()
+    summary = store_.get_summary(material_id)
+    if summary is None:
+        raise KeyError(f"Unknown materialsdb material id: {material_id}")
+    material = store_.get(material_id)
+
+    from materialsdb.ifc.project_library import ProjectLibrary
+
+    library = ProjectLibrary(schema=schema)
+    library.create_project_library(
+        company=summary.company,
+        companyid=summary.company_id or "",
+        ver=1,  # single-material files carry no source revision
+        crd=utils.new_tdatetime(),
+    )
+    add_material(library.file, material, company_id=summary.company_id or "", company=summary.company)
+    return library.file

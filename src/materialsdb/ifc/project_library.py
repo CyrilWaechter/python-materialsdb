@@ -65,42 +65,31 @@ class ProjectLibrary:
             ApplicationIdentifier="ifcopenshell",
         )
 
-    def create_project_library(self, source: Materials, role: str = "MANUFACTURER"):
+    def create_project_library(self, company: str, companyid: str, ver: int, crd, role: str = "MANUFACTURER"):
         file = self.file
 
-        # https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/link/ifcroleenum.htm
-        role = file.createIfcActorRole(role)
-
-        # https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/link/ifcperson.htm
+        role_entity = file.createIfcActorRole(role)
         person = file.createIfcPerson(
             Identification=str(uuid.uuid4()),
             FamilyName="Unknown",
             GivenName="Unknown",
-            Roles=[role],
+            Roles=[role_entity],
         )
-
-        # https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/link/ifcorganization.htm
-        organisation = file.createIfcOrganization(Identification=source.companyid, Name=source.company, Roles=[role])
-
-        # https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/link/ifcpersonandorganization.htm
-        person_and_organisation = file.createIfcPersonAndOrganization(person, organisation, Roles=[role])
-
-        # https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/link/ifcownerhistory.htm
+        organisation = file.createIfcOrganization(Identification=str(companyid), Name=str(company), Roles=[role_entity])
+        person_and_organisation = file.createIfcPersonAndOrganization(person, organisation, Roles=[role_entity])
         owner_history = file.createIfcOwnerHistory(
             OwningUser=person_and_organisation,
             OwningApplication=self.application,
-            CreationDate=max(int(utils.date_from_xml(source.crd).timestamp()), -2147483648),
+            CreationDate=max(int(utils.date_from_xml(crd).timestamp()), -2147483648),
         )
         self.owner_history = owner_history
-
-        # https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/link/ifcprojectlibrary.htm
         file.createIfcProjectLibrary(
             GlobalId=ifcopenshell.guid.new(),
             OwnerHistory=owner_history,
-            Name=source.company,
-            Description=f"Material library converted from materialsdb xml for company {source.company}",
+            Name=str(company),
+            Description=f"Material library converted from materialsdb xml for company {company}",
             ObjectType="MaterialLibrary",
-            LongName=f"{source.company} version {source.ver}",
+            LongName=f"{company} version {ver}",
         )
 
     def create_materials(self, source: Materials):
@@ -161,7 +150,7 @@ def create_project_library_from_xml(xml_path):
     library = ProjectLibrary()
     deserialiser = XmlDeserialiser()
     source = deserialiser.from_xml(str(xml_path))
-    library.create_project_library(source)
+    library.create_project_library(company=source.company, companyid=source.companyid, ver=source.ver, crd=source.crd)
     library.create_materials(source)
     return library.file
 

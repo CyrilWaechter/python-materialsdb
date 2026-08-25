@@ -262,3 +262,12 @@ class MaterialStore:
             return None
         element = objectify.fromstring(bytes(row[0]))
         return XmlDeserialiser().from_element(element)
+
+    def get_summary(self, material_id: str) -> MaterialSummary | None:
+        row = self.connection.execute(
+            f"SELECT {', '.join(_MATERIAL_COLUMNS)} FROM materials WHERE id=?",
+            (material_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_summary(row)

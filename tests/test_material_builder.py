@@ -20,7 +20,9 @@ def _entity_inventory(file):
 
 def test_batch_export_inventory_is_stable(mini_source):
     library = ProjectLibrary()
-    library.create_project_library(mini_source)
+    library.create_project_library(
+        company=mini_source.company, companyid=mini_source.companyid, ver=mini_source.ver, crd=mini_source.crd
+    )
     library.create_materials(mini_source)
 
     # Pinned golden snapshot of current batch-export behavior. This is a
@@ -179,3 +181,32 @@ def test_purge_keeps_shared_styles(mini_source):
     assert a_id not in remaining
     assert b_id in remaining
     assert len(file.by_type("IfcSurfaceStyle")) == styles_before  # shared styles untouched
+
+
+def test_create_material_file_standalone(mini_xml, tmp_path):
+    from materialsdb.ifc.material_builder import create_material_file
+    from materialsdb.store import MaterialStore
+
+    db_path = tmp_path / "standalone.db"
+    store_ = MaterialStore(db_path=db_path)
+    store_.refresh(paths=[mini_xml])
+
+    file = create_material_file("00000000-0000-0000-0000-000000000001", store_=store_)
+
+    assert len(file.by_type("IfcMaterial")) == 2  # two layers of fixture material 1
+    assert file.by_type("IfcProjectLibrary")
+    out = tmp_path / "single.ifc"
+    file.write(str(out))
+    reopened = ifcopenshell.open(str(out))
+    assert len(reopened.by_type("IfcMaterial")) == 2
+
+
+def test_create_material_file_unknown_id(mini_xml, tmp_path):
+    from materialsdb.ifc.material_builder import create_material_file
+    from materialsdb.store import MaterialStore
+
+    store_ = MaterialStore(db_path=tmp_path / "u.db")
+    store_.refresh(paths=[mini_xml])
+
+    with pytest.raises(KeyError, match="unknown-id"):
+        create_material_file("unknown-id", store_=store_)
