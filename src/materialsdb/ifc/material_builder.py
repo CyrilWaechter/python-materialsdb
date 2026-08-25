@@ -217,6 +217,10 @@ def purge_material(file, material_entity) -> None:
     target = {m.id() for m in file.by_type("IfcMaterial") if m == material_entity}
     for pset in list(file.by_type("IfcMaterialProperties")):
         if {m.id() for m in _materials_of(pset)} & target:
+            # file.remove() does not cascade to pset.Properties on ifcopenshell
+            # 0.8: delete each property explicitly or they leak as orphans
+            for prop in list(pset.Properties):
+                file.remove(prop)
             file.remove(pset)
     for layer in list(file.by_type("IfcMaterialLayer")):
         if layer.Material is not None and layer.Material.id() in target:

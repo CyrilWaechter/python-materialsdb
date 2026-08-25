@@ -148,12 +148,16 @@ def test_replace_rebuilds_with_fresh_entity_ids(mini_source):
 
     add_material(file, material, company="Mini SA", verxml=3)
     old_ids = [m.id() for m in file.by_type("IfcMaterial")]
+    psv_before = len(file.by_type("IfcPropertySingleValue"))
 
     new = add_material(file, material, company="Mini SA", verxml=3, replace=True)
 
     assert new is not None and new.id() not in old_ids
     assert _identity_id(file, new) == str(material.id)
     assert len(file.by_type("IfcMaterial")) == len(old_ids)  # same total, rebuilt
+    # file.remove() does not cascade to pset.Properties: purged psets must take
+    # their IfcPropertySingleValue children with them or they leak per cycle
+    assert len(file.by_type("IfcPropertySingleValue")) == psv_before
 
 
 def test_purge_keeps_shared_styles(mini_source):
