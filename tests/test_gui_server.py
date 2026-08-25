@@ -307,3 +307,54 @@ def test_non_dict_item_rejected(api):
     )
     assert status == 400
     assert "invalid item" in payload["error"]
+
+
+@pytest.fixture
+def constructions_api(api, tmp_path, monkeypatch):
+    import materialsdb.construction as cm
+
+    server, state = api
+    monkeypatch.setattr(cm, "constructions_dir", lambda: tmp_path / "constr")
+    return server, state
+
+
+def test_construction_crud_endpoints(constructions_api):
+    server, state = constructions_api
+    token = state.token
+    body = {
+        "name": "My wall",
+        "design_usage": "consDesignForWall",
+        "layers": [{"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15}],
+    }
+
+    from urllib.parse import quote
+
+    status, payload = request(server, "POST", f"/api/constructions/{quote('My wall')}", payload=body, token=token)
+    assert status == 200
+
+    status, payload = request(server, "GET", "/api/constructions")
+    assert payload["constructions"] == ["My wall"]
+
+    status, payload = request(server, "GET", f"/api/constructions/{quote('My wall')}")
+    assert payload["name"] == "My wall"
+
+    status, payload = request(
+        server, "POST", "/api/u_value", payload={"construction": body, "preset": "ISO6946"}, token=token
+    )
+    assert status == 200 and payload["u"] > 0
+
+    status, payload = request(server, "DELETE", f"/api/constructions/{quote('My wall')}", token=token)
+    assert status == 200
+
+
+def test_construction_validation_error_surfaces(constructions_api):
+    server, state = constructions_api
+    status, payload = request(
+        server,
+        "POST",
+        "/api/constructions/bad",
+        payload={"name": "bad", "layers": [{"material_id": "nope", "thickness_m": 0.1}]},
+        token=state.token,
+    )
+    assert status == 400
+    assert "nope" in payload["error"]

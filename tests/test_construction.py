@@ -106,6 +106,7 @@ def test_build_with_layers_false_creates_material_only(mini_source):
 
     assert len(created) == 1
     assert file.by_type("IfcMaterialLayer") == []
+    assert file.by_type("IfcMaterialLayerSet") == []
     identity = [p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
     assert len(identity) == 1
 
@@ -130,6 +131,10 @@ def test_to_ifc_layer_set_roundtrip(store, tmp_path):
     }
     layer_sets = reopened.by_type("IfcMaterialLayerSet")
     assert len(layer_sets) == 1 and layer_sets[0].LayerSetName == "Test wall"
+    assert [l.Description for l in layer_sets[0].MaterialLayers] == [
+        "00000000-0000-0000-0000-000000000002",
+        "00000000-0000-0000-0000-000000000001",
+    ]
     # identity psets ride along on referenced materials
     identity = [p for p in reopened.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
     assert len(identity) == 2
@@ -145,3 +150,58 @@ def test_to_ifc_rejects_unknown_materials(store):
     )
     with pytest.raises(ValueError, match="ffffffff"):
         to_ifc_layer_set(bad, store)
+
+
+def test_save_load_list_delete_roundtrip(store, tmp_path, monkeypatch):
+    import materialsdb.construction as cm
+
+    monkeypatch.setattr(cm, "constructions_dir", lambda: tmp_path / "constr")
+    construction = make_construction()
+
+    path = cm.save_construction(construction, store)
+    assert path.exists() and path.name == "test-wall.json"
+    assert cm.list_constructions() == ["Test wall"]
+
+    loaded = cm.load_construction("Test wall", store)
+    assert loaded == construction
+
+    assert cm.delete_construction("Test wall") is True
+    assert cm.delete_construction("Test wall") is False
+
+
+def test_slug_collision_suffixes(store, tmp_path, monkeypatch):
+    import materialsdb.construction as cm
+
+    monkeypatch.setattr(cm, "constructions_dir", lambda: tmp_path / "constr")
+    cm.save_construction(make_construction(), store)
+    second = make_construction()
+    second.name = "Test wall!"
+    path2 = cm.save_construction(second, store)
+    assert path2.name == "test-wall-2.json"
+
+
+def test_save_rejects_unknown_material_and_bad_thickness(store, tmp_path, monkeypatch):
+    import materialsdb.construction as cm
+
+    monkeypatch.setattr(cm, "constructions_dir", lambda: tmp_path / "constr")
+    bad_ids = make_construction()
+    bad_ids.layers[0].material_id = "ffffffff-0000-0000-0000-000000000000"
+    _, problems = cm.validate_construction(
+        {
+            "name": "x",
+            "design_usage": None,
+            "layers": [{"material_id": "ffffffff-0000-0000-0000-000000000000", "thickness_m": 0.2}],
+        },
+        store,
+    )
+    assert problems and "ffffffff" in problems[0]
+
+    _, problems = cm.validate_construction(
+        {
+            "name": "x",
+            "design_usage": None,
+            "layers": [{"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": -1}],
+        },
+        store,
+    )
+    assert any("thickness" in problem.lower() for problem in problems)

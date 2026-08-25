@@ -5,7 +5,7 @@ import json
 import secrets
 from dataclasses import asdict
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from materialsdb import config, utils
 from materialsdb.ifc.material_builder import add_material
@@ -167,6 +167,21 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             else:
                 self._send(200, payload)
             return
+        if parsed.path == "/api/constructions":
+            from materialsdb import construction as cm
+
+            self._send(200, {"constructions": cm.list_constructions()})
+            return
+        if parsed.path.startswith("/api/constructions/"):
+            from materialsdb import construction as cm
+
+            name = unquote(parsed.path.rsplit("/", 1)[1])
+            construction = cm.load_construction(name, store_)
+            if construction is None:
+                self._send(404, {"error": f"unknown construction: {name}"})
+            else:
+                self._send(200, cm._to_body(construction))
+            return
         self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -193,10 +208,30 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._config(payload)
             elif parsed.path == "/api/refresh":
                 self._refresh(payload)
+            elif parsed.path == "/api/u_value":
+                self._u_value(store_, payload)
+            elif parsed.path.startswith("/api/constructions/"):
+                self._construction_save(store_, parsed, payload)
             else:
                 self._send(404, {"error": "not found"})
         except Exception as err:  # noqa: BLE001 - one bad request must not kill the server
             self._send(500, {"error": str(err)})
+
+    def do_DELETE(self):
+        if not self._authorized():
+            self._send(403, {"error": "forbidden"})
+            return
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/constructions/"):
+            from materialsdb import construction as cm
+
+            name = unquote(parsed.path.rsplit("/", 1)[1])
+            if cm.delete_construction(name):
+                self._send(200, {"deleted": True})
+            else:
+                self._send(404, {"error": f"unknown construction: {name}"})
+            return
+        self._send(404, {"error": "not found"})
 
     def _export(self, store_, payload):
         import tempfile
@@ -326,6 +361,30 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 "skipped": [str(p) for p in report.skipped],
             },
         )
+
+    def _construction_save(self, store_, parsed, payload):
+        from materialsdb import construction as cm
+
+        name = unquote(parsed.path.rsplit("/", 1)[1])
+        body = dict(payload)
+        body.setdefault("name", name)
+        construction, problems = cm.validate_construction(body, store_)
+        if problems:
+            self._send(400, {"error": "; ".join(problems)})
+            return
+        cm.save_construction(construction, store_)
+        self._send(200, {"saved": construction.name})
+
+    def _u_value(self, store_, payload):
+        from materialsdb import construction as cm
+
+        body = payload.get("construction") or {}
+        construction, problems = cm.validate_construction(body, store_)
+        if problems:
+            self._send(400, {"error": "; ".join(problems)})
+            return
+        result = cm.u_value(construction, store_, preset=payload.get("preset") or "ISO6946")
+        self._send(200, asdict(result))
 
 
 class GuiServer(http.server.ThreadingHTTPServer):

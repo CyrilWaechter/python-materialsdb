@@ -1,9 +1,13 @@
 """Thermal construction composition: stack model, U-value math, IFC emission."""
 
+import json
 import math
+import re
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from materialsdb import config, utils
+from materialsdb import cache, config, utils
 
 # Surface resistances (m2K/W): interior/exterior by heat-flow direction.
 # ISO 6946 table values; SIA 180 references the same table for these boundary
@@ -164,3 +168,123 @@ def to_ifc_layer_set(construction: Construction, store_, file=None):
         LayerSetName=construction.name,
     )
     return target_file if library is None else library.file
+
+
+def constructions_dir() -> Path:
+    directory = cache.get_cache_folder() / "constructions"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug or "construction"
+
+
+def _unique_path(directory: Path, base: str) -> Path:
+    candidate = directory / f"{base}.json"
+    index = 2
+    while candidate.exists():
+        candidate = directory / f"{base}-{index}.json"
+        index += 1
+    return candidate
+
+
+def validate_construction(body: dict, store_) -> tuple[Construction, list[str]]:
+    problems: list[str] = []
+    name = str(body.get("name") or "").strip()
+    if not name:
+        problems.append("name required")
+    layers_body = body.get("layers")
+    if not isinstance(layers_body, list) or not layers_body:
+        problems.append("at least one layer required")
+        layers_body = []
+    layers = []
+    for index, entry in enumerate(layers_body):
+        if not isinstance(entry, dict):
+            problems.append(f"layer {index}: invalid entry")
+            continue
+        material_id = str(entry.get("material_id") or "")
+        try:
+            thickness = float(entry.get("thickness_m"))
+        except (TypeError, ValueError):
+            problems.append(f"layer {index}: thickness must be a number")
+            continue
+        if not math.isfinite(thickness) or thickness <= 0:
+            problems.append(f"layer {index}: thickness must be > 0")
+            continue
+        if store_.get(material_id) is None:
+            problems.append(f"unknown material id: {material_id}")
+            continue
+        layers.append(ConstructionLayer(material_id=material_id, thickness_m=thickness))
+    design_usage = body.get("design_usage") or None
+    if design_usage not in (None, *_DESIGN_USAGE_TO_DIRECTION):
+        problems.append(f"invalid design_usage: {design_usage}")
+    return Construction(name=name, design_usage=design_usage, layers=layers), problems
+
+
+def _to_body(construction: Construction) -> dict:
+    return {
+        "name": construction.name,
+        "design_usage": construction.design_usage,
+        "layers": [
+            {"material_id": layer.material_id, "thickness_m": layer.thickness_m} for layer in construction.layers
+        ],
+    }
+
+
+def save_construction(construction: Construction, store_) -> Path:
+    _, problems = validate_construction(_to_body(construction), store_)
+    if problems:
+        raise ValueError("; ".join(problems))
+    directory = constructions_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    base = slugify(construction.name)
+    path = _unique_path(directory, base)
+    payload = {
+        "name": construction.name,
+        "design_usage": construction.design_usage,
+        "layers": [
+            {"material_id": layer.material_id, "thickness_m": layer.thickness_m} for layer in construction.layers
+        ],
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+    return path
+
+
+def load_construction(name_or_slug: str, store_) -> Construction | None:
+    directory = constructions_dir()
+    candidates = [directory / f"{slugify(name_or_slug)}.json"]
+    for file in directory.glob("*.json"):
+        data = json.loads(file.read_text(encoding="utf-8"))
+        if data.get("name") == name_or_slug:
+            candidates.insert(0, file)
+            break
+    for file in candidates:
+        if file.exists():
+            data = json.loads(file.read_text(encoding="utf-8"))
+            layers = [
+                ConstructionLayer(material_id=l["material_id"], thickness_m=float(l["thickness_m"]))
+                for l in data.get("layers", [])
+            ]
+            return Construction(name=data["name"], design_usage=data.get("design_usage"), layers=layers)
+    return None
+
+
+def list_constructions() -> list[str]:
+    names = []
+    for file in constructions_dir().glob("*.json"):
+        try:
+            names.append(json.loads(file.read_text(encoding="utf-8"))["name"])
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return sorted(names)
+
+
+def delete_construction(name_or_slug: str) -> bool:
+    file = constructions_dir() / f"{slugify(name_or_slug)}.json"
+    if file.exists():
+        file.unlink()
+        return True
+    return False
