@@ -64,6 +64,7 @@ import ifcopenshell
 from materialsdb.ifc.material_builder import (
     MATERIALSDB_PSET,
     MaterialBuilder,
+    add_material,
 )
 
 
@@ -126,3 +127,51 @@ def test_style_cache_bounds_styles(mini_source):
 
     # Insulation color + Concrete fallback + Others(no color on mat 3 unused) bounded
     assert len(file.by_type("IfcSurfaceStyle")) <= 3
+
+
+def test_add_material_is_idempotent(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    material = mini_source.material[0]
+
+    first = add_material(file, material, company_id="A1B85A67", company="Mini SA", verxml=3)
+    count_before = len(file.by_type("IfcMaterial"))
+    second = add_material(file, material, company_id="A1B85A67", company="Mini SA", verxml=3)
+
+    # ifcopenshell hands out fresh wrapper objects per access: compare by value
+    assert first == second
+    assert len(file.by_type("IfcMaterial")) == count_before
+
+
+def test_replace_rebuilds_with_fresh_entity_ids(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    material = mini_source.material[0]
+
+    add_material(file, material, company="Mini SA", verxml=3)
+    old_ids = [m.id() for m in file.by_type("IfcMaterial")]
+
+    new = add_material(file, material, company="Mini SA", verxml=3, replace=True)
+
+    assert new is not None and new.id() not in old_ids
+    assert _identity_id(file, new) == str(material.id)
+    assert len(file.by_type("IfcMaterial")) == len(old_ids)  # same total, rebuilt
+
+
+def test_purge_keeps_shared_styles(mini_source):
+    from materialsdb.ifc.material_builder import purge_material
+
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+    a = builder.build(mini_source.material[0], company="Mini SA")  # Insulation color style
+    b = builder.build(mini_source.material[1], company="Mini SA")  # Concrete category style
+
+    styles_before = len(file.by_type("IfcSurfaceStyle"))
+    # Capture ids before purging: wrappers of removed entities dangle in ifcopenshell
+    a_id = a[0].id()
+    b_id = b[0].id()
+    purge_material(file, a[0])
+
+    # IfcMaterial has no GlobalId (not an IfcRoot subtype): identify by STEP id
+    remaining = {m.id() for m in file.by_type("IfcMaterial")}
+    assert a_id not in remaining
+    assert b_id in remaining
+    assert len(file.by_type("IfcSurfaceStyle")) == styles_before  # shared styles untouched

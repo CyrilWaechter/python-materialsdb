@@ -203,8 +203,30 @@ class MaterialBuilder:
         return self.file.createIfcColourRgb(Blue=color & 255, Green=(color >> 8) & 255, Red=(color >> 16) & 255)
 
 
-def purge_material(file, material_entity):  # implemented in Task 3
-    raise NotImplementedError
+def _materials_of(pset):
+    materials = pset.Material
+    if not isinstance(materials, (list, tuple)):
+        materials = [materials]
+    return materials
+
+
+def purge_material(file, material_entity) -> None:
+    """Remove one IfcMaterial and everything the builder created for it.
+
+    Shared surface styles are intentionally kept."""
+    target = {m.id() for m in file.by_type("IfcMaterial") if m == material_entity}
+    for pset in list(file.by_type("IfcMaterialProperties")):
+        if {m.id() for m in _materials_of(pset)} & target:
+            file.remove(pset)
+    for layer in list(file.by_type("IfcMaterialLayer")):
+        if layer.Material is not None and layer.Material.id() in target:
+            layer_sets = getattr(layer, "ToMaterialLayerSet", None) or ()
+            file.remove(layer)
+            for parent in layer_sets:
+                if not parent.MaterialLayers:
+                    file.remove(parent)
+    for material in [m for m in file.by_type("IfcMaterial") if m.id() in target]:
+        file.remove(material)
 
 
 def add_material(file, material, company_id="", company="", verxml=None, replace=False):
@@ -212,7 +234,11 @@ def add_material(file, material, company_id="", company="", verxml=None, replace
     existing = builder.find_existing(str(material.id))
     if existing and not replace:
         return existing
-    if existing and replace:
-        purge_material(file, existing)
+    if replace:
+        # one source material can yield several IfcMaterial entities (one per
+        # layer): purge them all before rebuilding
+        while existing is not None:
+            purge_material(file, existing)
+            existing = builder.find_existing(str(material.id))
     created = builder.build(material, company_id=company_id, company=company, verxml=verxml)
     return created[0] if created else None
