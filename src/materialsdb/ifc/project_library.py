@@ -1,6 +1,4 @@
-import json
 import uuid
-from pathlib import Path
 
 import ifcopenshell
 import ifcopenshell.api
@@ -9,54 +7,27 @@ from materialsdb import config, utils
 from materialsdb.classes import (
     Materials,
 )
+from materialsdb.ifc.material_builder import (
+    CATEGORIES,
+    MATERIALSDB_PSET,
+    PSETS,
+    MaterialBuilder,
+    clean_psets,
+    get_value,
+)
 from materialsdb.serialiser import XmlDeserialiser
 
-CATEGORIES = {
-    "Others": {"hatch": "", "color": (255, 255, 255)},
-    "Water_Proof": {"hatch": "", "color": (255, 255, 255)},
-    "Vapour_Proof": {"hatch": "", "color": (0, 0, 0)},
-    "Concrete": {"hatch": "", "color": (0, 255, 0)},
-    "Wood_Timberproducts": {"hatch": "", "color": (91, 60, 17)},
-    "Insulation": {"hatch": "", "color": (253, 108, 158)},
-    "Masonry": {"hatch": "", "color": (253, 70, 38)},
-    "Metal": {"hatch": "", "color": (119, 181, 254)},
-    "Mortar": {"hatch": "", "color": (102, 0, 153)},
-    "Plastics": {"hatch": "", "color": (96, 96, 96)},
-    "Stone": {"hatch": "", "color": (0, 0, 255)},
-    "Composite": {"hatch": "", "color": (112, 141, 35)},
-    "Films": {"hatch": "", "color": (0, 0, 0)},
-    "Render": {"hatch": "", "color": (0, 0, 0)},
-    "Covering": {"hatch": "", "color": (0, 0, 0)},
-    "Glas": {"hatch": "", "color": (27, 79, 8)},
-    "Soil": {"hatch": "", "color": (142, 84, 52)},
-}
-
-
-def clean_psets(psets):
-    new_dict = {}
-    for pset_name, props in psets.items():
-        pset_dict = {}
-        for prop_name, definition in props.items():
-            if definition["path"]:
-                pset_dict[prop_name] = definition
-        if pset_dict:
-            new_dict[pset_name] = pset_dict
-    return new_dict
-
-
-PSETS = json.loads(Path(__file__).with_name("material_psets.json").read_text("utf-8"))
-PSETS = clean_psets(PSETS)
-
-
-def get_value(layer, definition, country=None):
-    value = layer
-    for attrib in definition["path"]:
-        value = getattr(value, attrib)
-        if isinstance(value, list):
-            value = utils.get_by_country(value, country)
-            if not value:
-                return None
-    return value
+# Re-exports: external code may import these from project_library (historical API).
+__all__ = [
+    "CATEGORIES",
+    "MATERIALSDB_PSET",
+    "PSETS",
+    "MaterialBuilder",
+    "ProjectLibrary",
+    "clean_psets",
+    "create_project_library_from_xml",
+    "get_value",
+]
 
 
 class ProjectLibrary:
@@ -67,6 +38,7 @@ class ProjectLibrary:
         self.lang = config.get_lang()
         self.country = config.get_country()
         self.owner_history = None
+        self.builder = MaterialBuilder(self.file, country=self.country, lang=self.lang)
 
     def create_application(self):
         file = self.file
@@ -132,138 +104,57 @@ class ProjectLibrary:
         )
 
     def create_materials(self, source: Materials):
-        file = self.file
-        context = file.createIfcRepresentationContext()
         for material in utils.get_materials(source, self.country):
+            created = self.builder.build(material)
+            if not created:
+                continue
             name = utils.get_material_name(material, self.lang)
-            description = utils.get_material_description(material, self.lang)
-            utils.get_material_webinfo(material, self.lang)
-            category = material.information.group
-            color = material.information.color
-            surface_style = self.get_surface_style(color, category)
-            styled_item = file.createIfcStyledItem(Styles=[surface_style])
-            # TODO: hatch_item = file.createIfcFillAreaStyleHatching()
-            file.createIfcStyledRepresentation(
-                ContextOfItems=context,
-                RepresentationIdentifier="Body",
-                Items=[styled_item],
-            )
-            for layer in getattr(getattr(material, "layers", ()), "layer", ()):
-                ifc_material = file.createIfcMaterial(name, description, category)
-                for pset_name, props in PSETS.items():
-                    properties = []
-                    for prop_name, definition in props.items():
-                        primary_measure_type = definition["primary_measure_type"]
-                        if not primary_measure_type:
-                            continue
-                        value = get_value(layer, definition, self.country)
-                        if value:
-                            unit_factor = definition.get("unit_factor", None) or 1
-                            properties.append(
-                                file.create_entity(
-                                    "IfcPropertySingleValue",
-                                    Name=prop_name,
-                                    NominalValue=file.create_entity(primary_measure_type, value * unit_factor),
-                                )
-                            )
-                    if not properties:
-                        continue
-                    file.create_entity(
-                        "IfcMaterialProperties",
-                        Name=pset_name,
-                        Properties=properties,
-                        Material=ifc_material,
-                    )
-                geometry = utils.get_by_country(layer.geometry, self.country)
-                if getattr(geometry, "thick", None):
-                    element_name = f"{name} | {geometry.thick}mm"
-                    ifc_layer = file.create_entity(
-                        "IfcMaterialLayer",
-                        Material=ifc_material,
-                        LayerThickness=geometry.thick / 1000,
-                        Name=element_name,
-                    )
-                    assigned_material = file.create_entity(
-                        "IfcMaterialLayerSet",
-                        MaterialLayers=[ifc_layer],
-                        LayerSetName=element_name,
-                    )
-                else:
-                    element_name = name
-                    assigned_material = ifc_material
-                if material.information.wall:
-                    wall = file.create_entity(
-                        "IfcWallType",
-                        GlobalId=ifcopenshell.guid.new(),
-                        Name=element_name,
-                    )
-                    ifcopenshell.api.run(
-                        "material.assign_material",
-                        file,
-                        products=[wall],
-                        material=assigned_material,
-                    )
-                if material.information.roof:
-                    roof = file.create_entity(
-                        "IfcRoofType",
-                        GlobalId=ifcopenshell.guid.new(),
-                        Name=element_name,
-                    )
-                    ifcopenshell.api.run(
-                        "material.assign_material",
-                        file,
-                        products=[roof],
-                        material=assigned_material,
-                    )
-                if material.information.floor:
-                    slab = file.create_entity(
-                        "IfcRoofType",
-                        GlobalId=ifcopenshell.guid.new(),
-                        Name=element_name,
-                    )
-                    ifcopenshell.api.run(
-                        "material.assign_material",
-                        file,
-                        products=[slab],
-                        material=assigned_material,
-                    )
-                if material.information.door:
-                    door = file.create_entity(
-                        "IfcDoorType",
-                        GlobalId=ifcopenshell.guid.new(),
-                        Name=element_name,
-                    )
-                    ifcopenshell.api.run(
-                        "material.assign_material",
-                        file,
-                        products=[door],
-                        material=assigned_material,
-                    )
+            for layer, ifc_material in zip(utils.get_material_layers(material), created):
+                geometry = utils.get_by_country(layer.geometry or (), self.country)
+                thick = getattr(geometry, "thick", None)
+                element_name = f"{name} | {thick}mm" if thick else name
+                assigned_material = self._assigned_material(ifc_material, thick, element_name, name)
+                self._create_usage_types(material, assigned_material, element_name)
+
+    def _assigned_material(self, ifc_material, thick, element_name, name):
+        if not thick:
+            return ifc_material
+        # MaterialBuilder.build already created the layer + layer set for this
+        # layer; reuse them so batch export does not duplicate entities.
+        for rel in self.file.get_inverse(ifc_material):
+            if rel.is_a("IfcMaterialLayer"):
+                for layer_set in rel.ToMaterialLayerSet or ():
+                    return layer_set
+        ifc_layer = self.file.create_entity(
+            "IfcMaterialLayer",
+            Material=ifc_material,
+            LayerThickness=thick / 1000,
+            Name=str(element_name),
+        )
+        return self.file.create_entity(
+            "IfcMaterialLayerSet",
+            MaterialLayers=[ifc_layer],
+            LayerSetName=str(element_name),
+        )
+
+    def _create_usage_types(self, material, assigned_material, element_name):
+        file = self.file
+        kind_map = (("wall", "IfcWallType"), ("roof", "IfcRoofType"), ("floor", "IfcRoofType"), ("door", "IfcDoorType"))
+        for flag, entity_type in kind_map:
+            if getattr(material.information, flag, None):
+                product = file.create_entity(entity_type, GlobalId=ifcopenshell.guid.new(), Name=str(element_name))
+                ifcopenshell.api.run(
+                    "material.assign_material",
+                    file,
+                    products=[product],
+                    material=assigned_material,
+                )
 
     def get_surface_style(self, color, category):
-        file = self.file
-        if color:
-            name = f"color {color}"
-            style = file.createIfcSurfaceStyleShading(SurfaceColour=self.color_xml_to_ifc(color))
-        else:
-            if not category:
-                category = "Others"
-            name = f"category {category}"
-            for style in file.by_type("IfcSurfaceStyle"):
-                if style.Name == name:
-                    return style
-            style = file.createIfcSurfaceStyleShading(
-                SurfaceColour=self.file.createIfcColourRgb(None, *CATEGORIES[category]["color"]),
-            )
-        for surface_style in file.by_type("IfcSurfaceStyle"):
-            if surface_style.Name == name:
-                return surface_style
-        return file.createIfcSurfaceStyle(Name=name, Side="BOTH", Styles=[style])
+        return self.builder.get_surface_style(color, category)
 
     def color_xml_to_ifc(self, color: int):
-        """Color definition in xml is obscur. We assume that it is a decimal color.
-        See: https://stackoverflow.com/a/2262152/4098083"""
-        return self.file.createIfcColourRgb(Blue=color & 255, Green=(color >> 8) & 255, Red=(color >> 16) & 255)
+        return self.builder.color_xml_to_ifc(color)
 
 
 def create_project_library_from_xml(xml_path):
