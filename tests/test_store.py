@@ -115,3 +115,24 @@ def test_nonexistent_producer_is_skipped_without_raising(store, tmp_path, mini_x
     assert report.existing == [mini_xml]
     assert report.updated == []
     assert len(store.summaries()) == 3
+
+
+@pytest.fixture
+def mixed_store(tmp_path, mixed_xml):
+    s = MaterialStore(db_path=tmp_path / "mixed.db")
+    s.refresh(paths=[mixed_xml])
+    yield s
+    s.close()
+
+
+def test_mixed_fixture_rows_and_types(mixed_store):
+    rows = {r.id[-3:]: r for r in mixed_store.summaries(sort="id")}
+    assert rows["004"].type == "btk"
+    assert rows["005"].type == "construction"
+    assert rows["004"].thick_min == 200
+
+
+def test_type_filter(mixed_store):
+    assert [r.id[-3:] for r in mixed_store.summaries(type="btk")] == ["004"]
+    assert mixed_store.summaries(type="construction")[0].id.endswith("005")
+    assert mixed_store.summaries(type="simple") == []

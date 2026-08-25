@@ -12,6 +12,7 @@ class MaterialSummary:
     company_id: str
     company: str
     category: str
+    type: str
     names: dict[str, str]
     descriptions: dict[str, str]
     lambda_min: float | None
@@ -44,15 +45,24 @@ def summarize_material(
     country = country or config.get_country()
     information = material.information
 
+    mtype = str(getattr(material, "type", "") or "simple")
+
     lambdas = []
     thicks = []
-    for layer in utils.get_material_layers(material):
-        thermal = utils.get_by_country(layer.thermal or (), country)
-        geometry = utils.get_by_country(layer.geometry or (), country)
-        if thermal is not None:
-            lambdas.append(thermal.lambda_value)
-        if geometry is not None:
-            thicks.append(geometry.thick)
+    if mtype == "btk":
+        variations = getattr(getattr(material, "variations", None), "variation", ()) or ()
+        for variation in variations:
+            geometry = utils.get_by_country(variation.vgeometry or (), country)
+            if geometry is not None:
+                thicks.append(geometry.thick)
+    else:
+        for layer in utils.get_material_layers(material):
+            thermal = utils.get_by_country(layer.thermal or (), country)
+            geometry = utils.get_by_country(layer.geometry or (), country)
+            if thermal is not None:
+                lambdas.append(thermal.lambda_value)
+            if geometry is not None:
+                thicks.append(geometry.thick)
 
     lambda_min, lambda_max = _min_max(lambdas)
     thick_min, thick_max = _min_max(thicks)
@@ -62,6 +72,7 @@ def summarize_material(
         company_id=str(company_id),
         company=str(company),
         category=str(information.group or ""),
+        type=mtype,
         names=_localized_dict(getattr(information.names, "name", ())),
         descriptions=_localized_dict(getattr(getattr(information, "explanations", None), "explanation", ())),
         lambda_min=lambda_min,

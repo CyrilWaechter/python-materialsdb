@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<materials company="Mixed SA" companyid="B2C85A67-5B1E-4960-A297-2DE8275049C6" ver="1" crd="43979.7189866898" verXML="3" xmlns="http://www.materialsdb.org">
+  <material id="00000000-0000-0000-0000-000000000004" readonly="1" type="btk">
+    <information group="Insulation">
+      <names>
+        <name lang="fr">Complexe D</name>
+      </names>
+    </information>
+    <variations>
+      <variation id="00000000-0000-0000-0000-0000000000d1">
+        <vgeometry country="CH" thick="200"/>
+        <vthermal country="CH" U_value_without="0.25"/>
+      </variation>
+      <variation id="00000000-0000-0000-0000-0000000000d2">
+        <vgeometry country="CH" thick="300"/>
+        <vthermal country="CH" U_value_without="0.18"/>
+      </variation>
+    </variations>
+  </material>
+  <material id="00000000-0000-0000-0000-000000000005" readonly="1" type="construction">
+    <information group="Others">
+      <names>
+        <name lang="fr">Mur E</name>
+      </names>
+    </information>
+    <construction consref="REF-E" designusage="consDesignForWall">001[0.2@548268BE-BAC3-4E54-808D-A9524C558D13]</construction>
+  </material>
+</materials>

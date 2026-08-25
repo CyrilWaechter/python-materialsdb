@@ -18,3 +18,13 @@ def mini_xml() -> Path:
 @pytest.fixture
 def mini_source(mini_xml):
     return XmlDeserialiser().from_xml(str(mini_xml))
+
+
+@pytest.fixture
+def mixed_xml() -> Path:
+    return FIXTURES / "mixed_types.xml"
+
+
+@pytest.fixture
+def mixed_source(mixed_xml):
+    return XmlDeserialiser().from_xml(str(mixed_xml))

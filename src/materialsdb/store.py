@@ -14,11 +14,11 @@ from materialsdb.summary import MaterialSummary, summarize_material
 
 Report = namedtuple("Report", ["existing", "updated", "deleted", "skipped"])
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS materials (
-    id TEXT PRIMARY KEY, company_id TEXT, company TEXT, category TEXT,
+    id TEXT PRIMARY KEY, company_id TEXT, company TEXT, category TEXT, mtype TEXT,
     names TEXT, descriptions TEXT,
     lambda_min REAL, lambda_max REAL, thick_min REAL, thick_max REAL,
     usage TEXT, source_file TEXT, xml BLOB);
@@ -35,6 +35,7 @@ _MATERIAL_COLUMNS = (
     "company_id",
     "company",
     "category",
+    "mtype",
     "names",
     "descriptions",
     "lambda_min",
@@ -48,7 +49,7 @@ _MATERIAL_COLUMNS = (
 _COLUMN_LIST = ", ".join(_MATERIAL_COLUMNS)
 
 _NUMERIC_SORTS = {"lambda": "lambda_min", "thick": "thick_min"}
-_STRING_SORTS = {"company": "company", "category": "category"}
+_STRING_SORTS = {"company": "company", "category": "category", "id": "id"}
 
 
 def _sha256(path: Path) -> str:
@@ -135,12 +136,13 @@ class MaterialStore:
             material = deserialiser.from_element(element)
             summary = summarize_material(material, company_id=str(source.companyid), company=source.company)
             self.connection.execute(
-                f"INSERT INTO materials ({_COLUMN_LIST}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO materials ({_COLUMN_LIST}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     summary.id,
                     summary.company_id,
                     summary.company,
                     summary.category,
+                    summary.type,
                     json.dumps(summary.names),
                     json.dumps(summary.descriptions),
                     summary.lambda_min,
@@ -159,6 +161,7 @@ class MaterialStore:
         self,
         company=None,
         category=None,
+        type=None,
         min_lambda=None,
         max_lambda=None,
         min_thick=None,
@@ -179,6 +182,8 @@ class MaterialStore:
             add("company=?", company)
         if category:
             add("category=?", category)
+        if type:
+            add("mtype=?", type)
         if min_lambda is not None:
             add("lambda_max>=?", min_lambda)
         if max_lambda is not None:
@@ -232,6 +237,7 @@ class MaterialStore:
             company_id,
             company,
             category,
+            mtype,
             names,
             descriptions,
             lambda_min,
@@ -247,6 +253,7 @@ class MaterialStore:
             company_id=company_id,
             company=company,
             category=category,
+            type=mtype,
             names=json.loads(names),
             descriptions=json.loads(descriptions),
             lambda_min=lambda_min,

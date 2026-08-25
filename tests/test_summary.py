@@ -39,3 +39,30 @@ def test_material_without_layers_has_none_metrics(mini_source):
     assert s.lambda_min is None
     assert s.thick_max is None
     assert s.usage == {"wall": False, "roof": False, "floor": False, "door": False}
+
+
+def test_btk_summary_thickness_from_variations(mixed_source):
+    from materialsdb.summary import summarize_material
+
+    s = summarize_material(mixed_source.material[0], country="CH")
+
+    assert s.type == "btk"
+    assert s.thick_min == 200
+    assert s.thick_max == 300
+    assert s.lambda_min is None
+
+
+def test_construction_summary_has_no_metrics(mixed_source):
+    from materialsdb.summary import summarize_material
+
+    s = summarize_material(mixed_source.material[1])
+
+    assert s.type == "construction"
+    assert s.lambda_min is None
+    assert s.thick_max is None
+
+
+def test_simple_summary_keeps_type_simple(mini_source):
+    from materialsdb.summary import summarize_material
+
+    assert summarize_material(mini_source.material[0]).type == "simple"
