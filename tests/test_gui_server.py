@@ -72,6 +72,15 @@ def test_app_js_served(api):
     assert b"MATERIALSDB_TOKEN" in body
 
 
+def test_constructions_page_served(api):
+    server, _ = api
+    status, body = request(server, "GET", "/constructions.html")
+    assert status == 200
+    assert b"MATERIALSDB_TOKEN" in body
+    status, body = request(server, "GET", "/app-constructions.js")
+    assert status == 200
+
+
 def test_materials_list_and_filters(api):
     server, _ = api
     status, payload = request(server, "GET", "/api/materials")

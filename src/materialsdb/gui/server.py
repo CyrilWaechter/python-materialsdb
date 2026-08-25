@@ -135,6 +135,23 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 return
             self._send(200, content_type="text/javascript; charset=utf-8", raw=js.encode("utf-8"))
             return
+        if parsed.path in ("/constructions.html",):
+            try:
+                html = (STATIC_DIR / "constructions.html").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                self._send(404, {"error": "not found"})
+                return
+            html = html.replace("__TOKEN__", self.state.token)
+            self._send(200, content_type="text/html; charset=utf-8", raw=html.encode("utf-8"))
+            return
+        if parsed.path == "/app-constructions.js":
+            try:
+                js = (STATIC_DIR / "app-constructions.js").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                self._send(404, {"error": "not found"})
+                return
+            self._send(200, content_type="text/javascript; charset=utf-8", raw=js.encode("utf-8"))
+            return
         if parsed.path == "/api/materials":
             params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
             rows = store_.summaries(
@@ -210,6 +227,10 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._refresh(payload)
             elif parsed.path == "/api/u_value":
                 self._u_value(store_, payload)
+            elif parsed.path == "/api/export-construction":
+                self._export_construction(store_, payload)
+            elif parsed.path == "/api/append-construction":
+                self._append_construction(store_, payload)
             elif parsed.path.startswith("/api/constructions/"):
                 self._construction_save(store_, parsed, payload)
             else:
@@ -385,6 +406,44 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             return
         result = cm.u_value(construction, store_, preset=payload.get("preset") or "ISO6946")
         self._send(200, asdict(result))
+
+    def _export_construction(self, store_, payload):
+        import tempfile
+
+        from materialsdb import construction as cm
+
+        construction, problems = cm.validate_construction(payload.get("construction") or {}, store_)
+        if problems:
+            self._send(400, {"error": "; ".join(problems)})
+            return
+        file = cm.to_ifc_layer_set(construction, store_)
+        handle = tempfile.NamedTemporaryFile(suffix=".ifc", delete=False)  # noqa: SIM115 - closed immediately
+        handle.close()
+        try:
+            file.write(handle.name)
+            data = Path(handle.name).read_bytes()
+        finally:
+            Path(handle.name).unlink(missing_ok=True)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/ifc")
+        self.send_header("Content-Disposition", f'attachment; filename="{cm.slugify(construction.name)}.ifc"')
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _append_construction(self, store_, payload):
+        if self.state.file is None:
+            self._send(409, {"error": "no session open"})
+            return
+        from materialsdb import construction as cm
+
+        construction, problems = cm.validate_construction(payload.get("construction") or {}, store_)
+        if problems:
+            self._send(400, {"error": "; ".join(problems)})
+            return
+        cm.to_ifc_layer_set(construction, store_, file=self.state.file)
+        after = self.state.file.by_type("IfcMaterialLayerSet")
+        self._send(200, {"layer_count": len(after[-1].MaterialLayers)})
 
 
 class GuiServer(http.server.ThreadingHTTPServer):
