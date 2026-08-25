@@ -15,32 +15,29 @@
  input, select { margin-right: .5rem; }
  button { margin: .5rem .25rem 0 0; }
  #status { color: #06c; min-height: 1.2em; }
+ .facet { position:absolute; background:#fff; border:1px solid #999; padding:.35rem; z-index:5; max-height:14rem; overflow:auto; }
+ thead th { position: relative; }
 </style>
 </head>
 <body>
 <div id="left">
  <div>
-  <input id="text" placeholder="search"><select id="type">
-   <option value="">type</option><option>simple</option><option>btk</option><option>construction</option>
-  </select>
-  <select id="sort">
-   <option value="company">company</option><option value="category">category</option>
-   <option value="lambda">lambda</option><option value="thick">thickness</option><option value="name">name</option>
-  </select>
-  <label style="display:inline">desc <input type="checkbox" id="desc"></label>
-  <button onclick="loadTable()">search</button>
+  <input id="text" placeholder="live search…" style="min-width:16rem">
+  <select id="lang"><option value="en">en</option><option value="fr">fr</option><option value="de">de</option></select>
+  <select id="country"><option value="CH">CH</option><option value="FR">FR</option></select>
   <button id="export">export .ifc</button>
-  <button id="open">open session...</button>
+  <button id="open">open session…</button>
   <button id="pick">append selected</button>
   <label style="display:inline">replace <input type="checkbox" id="replace"></label>
   <button id="save">save session</button>
   <button id="refresh">refresh cache</button>
  </div>
  <p id="status"></p>
- <table><thead><tr><th></th><th>name</th><th>company</th><th>category</th><th>type</th><th>lambda</th><th>thick mm</th><th>usage</th></tr></thead>
+ <table><thead><tr id="header-row"></tr></thead>
  <tbody id="rows"></tbody></table>
 </div>
 <aside id="right"><h3>detail</h3><dl id="detail"></dl></aside>
+<div id="drawer" style="display:none"></div>
 <script>window.MATERIALSDB_TOKEN = "__TOKEN__";</script>
 <script src="/app.js"></script>
 </body>
