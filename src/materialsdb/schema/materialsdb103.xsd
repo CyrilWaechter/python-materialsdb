@@ -5,7 +5,7 @@ targetNamespace="http://www.materialsdb.org"
 xmlns="http://www.materialsdb.org"
 elementFormDefault="qualified"
 version="1.03">
- 
+
 <!--
    An XML XSD for Open Materials database (OMaterialsDB 1.03)
       DOCTYPE materials
@@ -15,9 +15,19 @@ version="1.03">
    released under the GNU Public License (GPL)
 -->
 <!--
-  1.03: 2018.09.11 updated security and lca/lcia in layers
-  1.02b01 : 2013.04.17 first version imported from DTD and revised
+  2022.04.12 added lcaversion.disabled (lcaversion.code is now optional) and construction.designUsage
+  2021.06.17 comprehensive update
+  2018.09.11 updated security and lca/lcia in layers
+  2013.04.17 first version imported from DTD and revised
 -->
+
+  <xs:simpleType name="TDesignUsage">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value='consDesignForWall'/>
+      <xs:enumeration value='consDesignForRoof'/>
+      <xs:enumeration value='consDesignForFloor'/>
+    </xs:restriction>
+  </xs:simpleType>
 
   <xs:simpleType name="TLCADB">
     <xs:restriction base="xs:string">
@@ -575,8 +585,8 @@ version="1.03">
     <xs:complexType>
       <xs:sequence>
         <xs:element ref='material' maxOccurs="unbounded"/>
-        <xs:element name="sig" type="THexHash"/>
-        <xs:element name="publickey" type="THexHash"/>
+        <xs:element name="sig" type="THexHash" minOccurs="1" maxOccurs="1"/>
+        <xs:element name="publickey" type="THexHash" minOccurs="1" maxOccurs="1"/>
       </xs:sequence>
       <xs:attribute name='company' type="xs:string" use='required'/>
       <xs:attribute name="companyid" type="guid" use="required"/>
@@ -818,7 +828,8 @@ version="1.03">
   <xs:element name='lcaversion'>	  
 	<xs:complexType>
 	  <xs:attribute name='id' type="xs:string" use='required'/>
-	  <xs:attribute name='code' type="Brackguid" use='required'/>
+	  <xs:attribute name='code' type="Brackguid" use='optional'/>
+	  <xs:attribute name='disabled' type="boolean" use='optional'/>
 	</xs:complexType>  
   </xs:element> 
   <xs:element name='emission'>
@@ -840,8 +851,8 @@ version="1.03">
   <xs:element name='variation'>
     <xs:complexType>
       <xs:sequence>
-        <xs:element ref='vgeometry' maxOccurs='unbounded'/>
-        <xs:element ref='vthermal' maxOccurs='unbounded'/>
+        <xs:element ref='vgeometry' minOccurs='0' maxOccurs='unbounded'/>
+        <xs:element ref='vthermal' minOccurs='0' maxOccurs='unbounded'/>
         <xs:element ref='vacoustic' minOccurs='0' maxOccurs='unbounded'/>
         <xs:element ref='vother' minOccurs='0' maxOccurs='unbounded'/>
         <xs:element ref='vlcia' minOccurs='0' maxOccurs='unbounded'/>
@@ -919,12 +930,9 @@ version="1.03">
         <xs:extension base="xs:string">
           <xs:attribute name='source' type="xs:string" use='optional'/>
           <xs:attribute name='consref' type="xs:string" use='optional'/>
-        </xs:extension>
+          <xs:attribute name='designusage' type="TDesignUsage" use='optional'/>
+		</xs:extension>
       </xs:simpleContent>
     </xs:complexType>
   </xs:element>
 </xs:schema>
-
-
-
-

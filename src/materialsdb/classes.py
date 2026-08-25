@@ -14,6 +14,12 @@ from dataclasses import dataclass
 from typing import Tuple, Optional, List
 
 
+class TDesignUsage(str):
+    xs_type: str = "simpleType"
+    xml_enum: Tuple[str, ...] = ('consDesignForWall', 'consDesignForRoof', 'consDesignForFloor')
+    xml_name: str = "TDesignUsage"
+
+
 class TLCADB(str):
     xs_type: str = "simpleType"
     xml_enum: Tuple[str, ...] = ('dbKBOB', 'dbOkobauDat', 'dbLux')
@@ -58,7 +64,7 @@ class T2Lowercase(str):
 
 class Groupkind(str):
     xs_type: str = "simpleType"
-    xml_enum: Tuple[str, ...] = ('Others', 'Water_Proof', 'Vapour_Proof', 'Concrete', 'Wood_Timberproducts', 'Insulation', 'Masonry', 'Metal', 'Mortar', 'Plastics', 'Stone', 'Composite', 'Films', 'Render', 'Covering', 'Glas', 'Soil', 'air')
+    xml_enum: Tuple[str, ...] = ('Others', 'Water_Proof', 'Vapour_Proof', 'Concrete', 'Wood_Timberproducts', 'Insulation', 'Masonry', 'Metal', 'Mortar', 'Plastics', 'Stone', 'Composite', 'Films', 'Render', 'Covering', 'Glas', 'Soil', 'Air')
     xml_name: str = "groupkind"
 
 
@@ -408,9 +414,10 @@ class Lcia:
 @dataclass
 class Lcaversion:
     id: str
-    code: Brackguid
     xs_type: str = "element"
-    xml_attributes: Tuple[str, ...] = ('id', 'code')
+    code: Optional[Brackguid] = None
+    disabled: Optional[Boolean] = None
+    xml_attributes: Tuple[str, ...] = ('id', 'code', 'disabled')
     xml_name = "lcaversion"
     xml_elements: Tuple[str, ...] = ()
 
@@ -555,11 +562,11 @@ class Vlca:
 @dataclass
 class Variation:
     id: Guid
-    vgeometry: List[Vgeometry]
-    vthermal: List[Vthermal]
     xs_type: str = "element"
     displayorder: Optional[int] = None
     xml_attributes: Tuple[str, ...] = ('id', 'displayorder')
+    vgeometry: Optional[List[Vgeometry]] = None
+    vthermal: Optional[List[Vthermal]] = None
     vacoustic: Optional[List[Vacoustic]] = None
     vother: Optional[List[Vother]] = None
     vlcia: Optional[List[Vlcia]] = None
@@ -582,7 +589,8 @@ class Construction:
     xs_type: str = "element"
     source: Optional[str] = None
     consref: Optional[str] = None
-    xml_attributes: Tuple[str, ...] = ('source', 'consref')
+    designusage: Optional[TDesignUsage] = None
+    xml_attributes: Tuple[str, ...] = ('source', 'consref', 'designusage')
     xml_name = "construction"
     xml_elements: Tuple[str, ...] = ()
 

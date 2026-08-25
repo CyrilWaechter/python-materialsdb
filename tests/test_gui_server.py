@@ -104,7 +104,7 @@ def test_material_detail_with_btk_extras(api, mixed_xml):
     assert payload["consref"] == "REF-E"
     # designusage is not declared in materialsdb103.xsd, so the generated
     # Construction class drops it and the payload degrades to "".
-    assert payload["designusage"] == ""
+    assert payload["designusage"] == "consDesignForWall"
 
     status, payload = request(server, "GET", "/api/materials/unknown")
     assert status == 404
