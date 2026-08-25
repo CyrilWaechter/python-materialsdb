@@ -39,12 +39,14 @@ def request(server, method, path, payload=None, token=None):
 
 
 @pytest.fixture
-def api(tmp_path, mini_xml):
+def api(tmp_path, mini_xml, mixed_xml):
     from materialsdb.gui.server import GuiState, make_server
     from materialsdb.store import MaterialStore
 
+    # one combined refresh: sequential refresh calls would drop mini (refresh
+    # deletes sources absent from the current paths list)
     store_ = MaterialStore(db_path=tmp_path / "gui.db")
-    store_.refresh(paths=[mini_xml])
+    store_.refresh(paths=[mini_xml, mixed_xml])
     state = GuiState(store=store_)
     server = make_server(state=state)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -75,15 +77,15 @@ def test_materials_list_and_filters(api):
     status, payload = request(server, "GET", "/api/materials")
     assert status == 200
     ids = {m["id"][-3:] for m in payload["materials"]}
-    assert ids == {"001", "002", "003"}
+    assert ids == {"001", "002", "003", "004", "005"}
     first = payload["materials"][0]
     assert {"id", "company", "category", "type", "names", "lambda_min"} <= set(first)
 
     status, payload = request(server, "GET", "/api/materials?category=Insulation")
-    assert [m["id"][-3:] for m in payload["materials"]] == ["001"]
+    assert [m["id"][-3:] for m in payload["materials"]] == ["001", "004"]
 
     status, payload = request(server, "GET", "/api/materials?type=btk&store_probe=1")
-    assert payload["materials"] == []
+    assert [m["id"][-3:] for m in payload["materials"]] == ["004"]
 
     status, payload = request(server, "GET", "/api/materials?text=isol")
     assert len(payload["materials"]) == 1
@@ -222,3 +224,34 @@ def test_config_roundtrip(api):
 
     assert status == 200
     assert recorded == {"lang": "en", "country": "FR"}
+
+
+def test_materials_rows_carry_display_name(api):
+    server, _ = api
+    _, payload = request(server, "GET", "/api/materials?category=Insulation")
+    row = payload["materials"][0]
+    assert row["display_name"] == "Isolant A"
+
+    _, payload = request(server, "GET", "/api/materials?lang=de&category=Insulation")
+    assert payload["materials"][0]["display_name"] == "Daemmstoff A"
+
+
+def test_detail_layers_array(api):
+    server, _ = api
+    status, payload = request(server, "GET", "/api/materials/00000000-0000-0000-0000-000000000001")
+    assert status == 200
+    assert [layer["thick"] for layer in payload["layers"]] == [200, 100]
+    assert payload["layers"][0]["id"] == "00000000-0000-0000-0000-0000000000a1"
+    assert payload["layers"][0]["lambda_value"] == 0.036
+
+
+def test_detail_type_specific_arrays(api):
+    server, _ = api
+
+    _, payload = request(server, "GET", "/api/materials/00000000-0000-0000-0000-000000000004")
+    assert payload["type"] == "btk"
+    assert payload["layers"] == []
+    assert [(v["thick"], v["u_value_without"]) for v in payload["variations"]] == [(200, 0.25), (300, 0.18)]
+
+    _, payload = request(server, "GET", "/api/materials/00000000-0000-0000-0000-000000000005")
+    assert payload["variations"] == []

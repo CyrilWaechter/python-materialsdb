@@ -20,6 +20,10 @@ def _float(value):
         return None
 
 
+def _resolve_display_name(names, lang):
+    return str(names.get(lang) or names.get("") or "")
+
+
 class GuiState:
     def __init__(self, store=None):
         self.token = secrets.token_urlsafe(16)
@@ -58,6 +62,33 @@ def detail_payload(store_, material_id):
         construction = getattr(material, "construction", None)
         payload["consref"] = str(getattr(construction, "consref", "") or "")
         payload["designusage"] = str(getattr(construction, "designusage", "") or "")
+    layers = []
+    variations = []
+    if summary.type == "btk":
+        raw_variations = getattr(getattr(material, "variations", None), "variation", ()) or ()
+        for variation in raw_variations:
+            geometry = utils.get_by_country(variation.vgeometry or (), country)
+            thermal = utils.get_by_country(variation.vthermal or (), country)
+            variations.append(
+                {
+                    "id": str(getattr(variation, "id", "")),
+                    "thick": getattr(geometry, "thick", None),
+                    "u_value_without": getattr(thermal, "U_value_without", None),
+                }
+            )
+    elif summary.type == "simple":
+        for layer in utils.get_material_layers(material):
+            thermal = utils.get_by_country(layer.thermal or (), country)
+            geometry = utils.get_by_country(layer.geometry or (), country)
+            layers.append(
+                {
+                    "id": str(getattr(layer, "id", "")),
+                    "thick": getattr(geometry, "thick", None) if geometry is not None else None,
+                    "lambda_value": getattr(thermal, "lambda_value", None) if thermal is not None else None,
+                }
+            )
+    payload["layers"] = layers
+    payload["variations"] = variations
     return payload
 
 
@@ -120,7 +151,13 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 ascending=params.get("order") != "desc",
                 lang=params.get("lang") or None,
             )
-            self._send(200, {"materials": [asdict(row) for row in rows]})
+            lang = params.get("lang") or config.get_lang()
+            materials = []
+            for row in rows:
+                item = asdict(row)
+                item["display_name"] = _resolve_display_name(item["names"], lang)
+                materials.append(item)
+            self._send(200, {"materials": materials})
             return
         if parsed.path.startswith("/api/materials/"):
             material_id = parsed.path.rsplit("/", 1)[1]
