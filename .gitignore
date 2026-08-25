@@ -4,6 +4,8 @@ __pycache__
 .env
 build
 dist
-materialsdb.egg-info
+*.egg-info
 Archives
 *.ifc
+.benchmarks/
+.superpowers/
