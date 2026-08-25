@@ -137,7 +137,11 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         if not self._authorized():
             self._send(403, {"error": "forbidden"})
             return
-        payload = self._read_json()
+        try:
+            payload = self._read_json()
+        except ValueError as err:
+            self._send(400, {"error": f"invalid json: {err}"})
+            return
         store_ = self.state.resolve_store()
         try:
             if parsed.path == "/api/export":
@@ -175,19 +179,19 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             ver=1,
             crd=utils.new_tdatetime(),
         )
-        added = []
         for material_id in ids:
             summary = store_.get_summary(material_id)
             material = store_.get(material_id)
             if summary is None or material is None:
                 continue
             add_material(library.file, material, company_id=summary.company_id or "", company=summary.company)
-            added.append(material_id)
-        with tempfile.NamedTemporaryFile(suffix=".ifc", delete=False) as handle:
-            temp_path = handle.name
-        library.file.write(temp_path)
-        data = Path(temp_path).read_bytes()
-        Path(temp_path).unlink(missing_ok=True)
+        handle = tempfile.NamedTemporaryFile(suffix=".ifc", delete=False)  # noqa: SIM115 - closed immediately
+        handle.close()
+        try:
+            library.file.write(handle.name)
+            data = Path(handle.name).read_bytes()
+        finally:
+            Path(handle.name).unlink(missing_ok=True)
         self.send_response(200)
         self.send_header("Content-Type", "application/ifc")
         self.send_header("Content-Disposition", 'attachment; filename="materialsdb_export.ifc"')

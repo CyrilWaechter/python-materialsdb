@@ -198,6 +198,23 @@ def test_session_open_rejects_bad_path(api, tmp_path):
     assert status == 400
 
 
+def test_pick_malformed_json_returns_400(api):
+    server, state = api
+    conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+    body = b"{not json"
+    conn.request(
+        "POST",
+        "/api/pick",
+        body=body,
+        headers={"Content-Length": str(len(body)), "X-MaterialsDB-Token": state.token},
+    )
+    response = conn.getresponse()
+    payload = json.loads(response.read())
+    conn.close()
+    assert response.status == 400
+    assert payload["error"].startswith("invalid json")
+
+
 def test_config_roundtrip(api):
     recorded = pytest.config_recorded  # ty: ignore[unresolved-attribute] - set by pinned_fr_ch_config fixture
 
