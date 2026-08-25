@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<materials company="Dup SA" companyid="C3D85A67-5B1E-4960-A297-2DE8275049C7" ver="1" crd="43979.7189866898" verXML="3" xmlns="http://www.materialsdb.org">
+  <material id="aaaa0000-0000-0000-0000-00000000aaa1" readonly="1" type="simple">
+    <information group="Insulation">
+      <names>
+        <name lang="fr">Premier F</name>
+      </names>
+    </information>
+  </material>
+  <material id="aaaa0000-0000-0000-0000-00000000aaa1" readonly="1" type="simple">
+    <information group="Concrete">
+      <names>
+        <name lang="fr">Doublon G</name>
+      </names>
+    </information>
+  </material>
+</materials>

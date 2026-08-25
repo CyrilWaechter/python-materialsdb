@@ -136,3 +136,22 @@ def test_type_filter(mixed_store):
     assert [r.id[-3:] for r in mixed_store.summaries(type="btk")] == ["004"]
     assert mixed_store.summaries(type="construction")[0].id.endswith("005")
     assert mixed_store.summaries(type="simple") == []
+
+
+def test_duplicate_ids_skip_row_not_file(tmp_path, mini_xml):
+    from pathlib import Path
+
+    dup = Path(__file__).parent / "fixtures" / "duplicate_ids.xml"
+    s = MaterialStore(db_path=tmp_path / "dup.db")
+    try:
+        report = s.refresh(paths=[dup])
+
+        assert len(report.updated) == 1  # file processed, not skipped
+        rows = s.summaries(sort="id")
+        assert len(rows) == 1  # first occurrence wins
+        assert rows[0].names["fr"] == "Premier F"
+        # healthy files coexist
+        s.refresh(paths=[mini_xml, dup])
+        assert {r.id[-3:] for r in s.summaries()} == {"001", "002", "003", "aa1"}
+    finally:
+        s.close()

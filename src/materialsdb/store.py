@@ -135,25 +135,30 @@ class MaterialStore:
         for element in root.material:
             material = deserialiser.from_element(element)
             summary = summarize_material(material, company_id=str(source.companyid), company=source.company)
-            self.connection.execute(
-                f"INSERT INTO materials ({_COLUMN_LIST}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    summary.id,
-                    summary.company_id,
-                    summary.company,
-                    summary.category,
-                    summary.type,
-                    json.dumps(summary.names),
-                    json.dumps(summary.descriptions),
-                    summary.lambda_min,
-                    summary.lambda_max,
-                    summary.thick_min,
-                    summary.thick_max,
-                    json.dumps(summary.usage),
-                    str(path),
-                    sqlite3.Binary(etree.tostring(element)),
-                ),
-            )
+            try:
+                self.connection.execute(
+                    f"INSERT INTO materials ({_COLUMN_LIST}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        summary.id,
+                        summary.company_id,
+                        summary.company,
+                        summary.category,
+                        summary.type,
+                        json.dumps(summary.names),
+                        json.dumps(summary.descriptions),
+                        summary.lambda_min,
+                        summary.lambda_max,
+                        summary.thick_min,
+                        summary.thick_max,
+                        json.dumps(summary.usage),
+                        str(path),
+                        sqlite3.Binary(etree.tostring(element)),
+                    ),
+                )
+            except sqlite3.IntegrityError as err:
+                # duplicate material id within the same source file: first
+                # occurrence wins, the row (not the whole file) is skipped.
+                print(f"{path.name}: duplicate material id {summary.id} skipped ({err})")
 
     # ---------- queries ----------
 
