@@ -137,15 +137,13 @@ class ProjectLibrary:
         for material in utils.get_materials(source, self.country):
             name = utils.get_material_name(material, self.lang)
             description = utils.get_material_description(material, self.lang)
-            webinfo = utils.get_material_webinfo(material, self.lang)
+            utils.get_material_webinfo(material, self.lang)
             category = material.information.group
-            labels = material.information.labels
             color = material.information.color
-            brushstyle = material.information.BrushStyle
             surface_style = self.get_surface_style(color, category)
             styled_item = file.createIfcStyledItem(Styles=[surface_style])
             # TODO: hatch_item = file.createIfcFillAreaStyleHatching()
-            representation = file.createIfcStyledRepresentation(
+            file.createIfcStyledRepresentation(
                 ContextOfItems=context,
                 RepresentationIdentifier="Body",
                 Items=[styled_item],
@@ -153,7 +151,7 @@ class ProjectLibrary:
             for layer in getattr(getattr(material, "layers", ()), "layer", ()):
                 ifc_material = file.createIfcMaterial(name, description, category)
                 for pset_name, props in PSETS.items():
-                    properties = list()
+                    properties = []
                     for prop_name, definition in props.items():
                         primary_measure_type = definition["primary_measure_type"]
                         if not primary_measure_type:
@@ -170,7 +168,7 @@ class ProjectLibrary:
                             )
                     if not properties:
                         continue
-                    pset = file.create_entity(
+                    file.create_entity(
                         "IfcMaterialProperties",
                         Name=pset_name,
                         Properties=properties,

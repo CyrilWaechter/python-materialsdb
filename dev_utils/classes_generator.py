@@ -136,7 +136,7 @@ class {class_name}({parent_class_name}):
             complex_types.append(name)
             extension = complex_type.simpleContent.extension
             base_type = extension.get("base")
-            if not base_type in self.base_types.keys():
+            if base_type not in self.base_types:
                 self.parse_complex_by_name(base_type, pyattr)
             parent_class_name = self.get_py_type_as_string(base_type)
             self.parse_attrib(extension, pyattr)

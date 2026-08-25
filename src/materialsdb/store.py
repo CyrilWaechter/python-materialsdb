@@ -111,7 +111,7 @@ class MaterialStore:
                     existing.append(path)
                     continue
                 self._upsert_file(deserialiser, path)
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 - one bad producer must not abort refresh
                 print(f"{path.name}: skipped during store refresh:\n\t{err}")
                 skipped.append(path)
                 continue
@@ -119,7 +119,7 @@ class MaterialStore:
                 "INSERT INTO producer_files(path, sha256, built_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(path) DO UPDATE SET sha256=excluded.sha256, "
                 "built_at=excluded.built_at",
-                (str(path), digest, datetime.datetime.now().timestamp()),
+                (str(path), digest, datetime.datetime.now(datetime.timezone.utc).timestamp()),
             )
             updated.append(path)
 

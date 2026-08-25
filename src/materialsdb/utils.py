@@ -15,7 +15,7 @@ from materialsdb.classes import (
 
 def date_from_xml(days: float) -> datetime.datetime:
     """Convert days since 30.12.1899 which is materialsdb xml convention to datetime"""
-    return datetime.datetime(1899, 12, 30) + datetime.timedelta(days=days)
+    return datetime.datetime(1899, 12, 30) + datetime.timedelta(days=days)  # noqa: DTZ001 - naive-by-design, see date_to_xml
 
 
 def date_to_xml(date: datetime.datetime) -> float:
@@ -39,7 +39,7 @@ def get_materials(materials: Materials, country: str, include_outdated=False) ->
             yield material
             continue
         for material_country in material_countries:
-            if not material_country == country:
+            if material_country != country:
                 break
         else:
             continue
@@ -77,8 +77,7 @@ def get_material_webinfo(material: Material, lang: str) -> Webinfo:
 
 
 def get_material_layers(material: Material) -> Generator[Layer, None, None]:
-    for layer in getattr(getattr(material, "layers", ()), "layer", ()):
-        yield layer
+    yield from getattr(getattr(material, "layers", ()), "layer", ())
 
 
 def get_by_country(values, country):

@@ -75,7 +75,7 @@ class XmlDeserialiser:
         def load(path):
             try:
                 return Path(path), self.from_xml(str(path))
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 - batch parsing must survive bad files
                 print(f"{Path(path).name}: could not parse file:\n\t{err}")
                 return Path(path), None
 
@@ -148,7 +148,7 @@ class XmlSerialiser:
         with open(xml_path, "wb") as file:
             file.write(xml_str)
 
-    def serialise(self, element, name: str = None):
+    def serialise(self, element, name: str | None = None):
         # Process base element with attribute and text value
         kwargs = {}
         for attrib in getattr(element, "xml_attributes", ()):
