@@ -210,3 +210,41 @@ def test_create_material_file_unknown_id(mini_xml, tmp_path):
 
     with pytest.raises(KeyError, match="unknown-id"):
         create_material_file("unknown-id", store_=store_)
+
+
+def test_build_layer_subset_by_source_guid(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+    material = mini_source.material[0]
+    first_layer_guid = str(material.layers.layer[0].id)
+
+    created = builder.build(material, company="Mini SA", layer_ids={first_layer_guid})
+
+    assert len(created) == 1
+    layers = file.by_type("IfcMaterialLayer")
+    assert len(layers) == 1
+    assert layers[0].Description == first_layer_guid
+
+
+def test_add_material_passes_layer_subset(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    material = mini_source.material[0]
+    second_layer_guid = str(material.layers.layer[1].id)
+
+    result = add_material(file, material, company="Mini SA", layer_ids={second_layer_guid})
+
+    assert result is not None
+    layers = file.by_type("IfcMaterialLayer")
+    assert len(layers) == 1
+    assert layers[0].Description == second_layer_guid
+
+
+def test_build_all_layers_description_carry_guids(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+    material = mini_source.material[0]
+
+    builder.build(material, company="Mini SA")
+
+    descriptions = {layer.Description for layer in file.by_type("IfcMaterialLayer")}
+    assert descriptions == {str(layer.id) for layer in material.layers.layer}

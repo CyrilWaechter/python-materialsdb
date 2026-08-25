@@ -67,7 +67,7 @@ class MaterialBuilder:
         self._context = None
         self._styles = {}
 
-    def build(self, material, company_id="", company="", verxml=None):
+    def build(self, material, company_id="", company="", verxml=None, layer_ids=None):
         name = utils.get_material_name(material, self.lang)
         description = utils.get_material_description(material, self.lang)
         category = str(material.information.group or "")
@@ -80,7 +80,10 @@ class MaterialBuilder:
             Items=[styled_item],
         )
         created = []
+        wanted = {str(g) for g in layer_ids} if layer_ids is not None else None
         for layer in utils.get_material_layers(material):
+            if wanted is not None and str(layer.id) not in wanted:
+                continue
             ifc_material = self.file.createIfcMaterial(str(name), str(description), category)
             created.append(ifc_material)
             self._create_identity_pset(ifc_material, material, company_id, company, verxml)
@@ -94,6 +97,7 @@ class MaterialBuilder:
                     Material=ifc_material,
                     LayerThickness=thick / 1000,
                     Name=str(element_name),
+                    Description=str(layer.id),
                 )
                 self.file.create_entity(
                     "IfcMaterialLayerSet",
@@ -233,7 +237,7 @@ def purge_material(file, material_entity) -> None:
         file.remove(material)
 
 
-def add_material(file, material, company_id="", company="", verxml=None, replace=False):
+def add_material(file, material, company_id="", company="", verxml=None, replace=False, layer_ids=None):
     builder = MaterialBuilder(file)
     existing = builder.find_existing(str(material.id))
     if existing and not replace:
@@ -244,7 +248,7 @@ def add_material(file, material, company_id="", company="", verxml=None, replace
         while existing is not None:
             purge_material(file, existing)
             existing = builder.find_existing(str(material.id))
-    created = builder.build(material, company_id=company_id, company=company, verxml=verxml)
+    created = builder.build(material, company_id=company_id, company=company, verxml=verxml, layer_ids=layer_ids)
     return created[0] if created else None
 
 
