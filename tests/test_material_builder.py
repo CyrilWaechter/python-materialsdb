@@ -31,7 +31,9 @@ def test_batch_export_inventory_is_stable(mini_source):
     # 2026-08-25: +3 IfcMaterialProperties / +9 IfcPropertySingleValue are the
     # new 'materialsdb' identity psets (id/company_id/company IfcText) written
     # per created IfcMaterial by the shared MaterialBuilder (batch passes no
-    # verxml). All other counts unchanged vs the pre-refactor snapshot.
+    # verxml). 2026-08-25 (v1.1): +3 further IfcPropertySingleValue (15 -> 18)
+    # from the new 'thick' property in materialsdb.org_layer (one per layer).
+    # All other counts unchanged vs the pre-refactor snapshot.
     inventory = _entity_inventory(library.file)
     expected_inventory = {
         "IfcAddress": 1,
@@ -49,7 +51,7 @@ def test_batch_export_inventory_is_stable(mini_source):
         "IfcStyledItem": 3,
         "IfcStyledRepresentation": 3,
         "IfcMaterial": 3,  # one per layer across fixture materials (2 + 1 + 0)
-        "IfcPropertySingleValue": 15,
+        "IfcPropertySingleValue": 18,
         "IfcMaterialProperties": 9,
         "IfcMaterialLayer": 3,
         "IfcMaterialLayerSet": 3,
@@ -248,3 +250,24 @@ def test_build_all_layers_description_carry_guids(mini_source):
 
     descriptions = {layer.Description for layer in file.by_type("IfcMaterialLayer")}
     assert descriptions == {str(layer.id) for layer in material.layers.layer}
+
+
+def test_org_layer_pset_exposes_layer_id_and_thickness(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+    material = mini_source.material[0]
+
+    builder.build(material, company="Mini SA")
+
+    org_layer_psets = [
+        pset for pset in file.by_type("IfcMaterialProperties") if pset.Name == "materialsdb.org_layer"
+    ]
+    assert len(org_layer_psets) == 2  # one per layer of Isolant A
+    by_layer_id = {}
+    for pset in org_layer_psets:
+        props = {prop.Name: prop.NominalValue.wrappedValue for prop in pset.Properties}
+        by_layer_id[props["layer_id"]] = props["thick"]
+    assert by_layer_id == {
+        "00000000-0000-0000-0000-0000000000a1": 0.2,  # 200 mm -> meters
+        "00000000-0000-0000-0000-0000000000a2": 0.1,
+    }

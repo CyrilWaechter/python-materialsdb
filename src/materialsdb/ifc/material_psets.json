@@ -255,6 +255,14 @@
     "displayorder"
    ],
    "primary_measure_type": "IfcInteger"
+  },
+  "thick": {
+   "path": [
+    "geometry",
+    "thick"
+   ],
+   "unit_factor": 0.001,
+   "primary_measure_type": "IfcPositiveLengthMeasure"
   }
  },
  "materialsdb.org_thermal": {
