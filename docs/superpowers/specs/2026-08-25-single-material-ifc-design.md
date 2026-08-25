@@ -67,7 +67,7 @@ removes the current `file.by_type("IfcSurfaceStyle")` scans per material.
 
 ## Semantics
 
-- Idempotency: key = `id` property of the `materialsdb` pset. Lookup is one
+- Idempotency: key = `material_id` property of the `materialsdb` pset. Lookup is one
   `by_type("IfcMaterialProperties")` pass filtered by Name — bounded by target
   file size, no global scans.
 - `replace=True`: removes the found material's owned entities (material, its

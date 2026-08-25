@@ -120,7 +120,7 @@ class MaterialBuilder:
     @staticmethod
     def _pset_id(pset):
         for prop in pset.Properties:
-            if prop.Name == "id":
+            if prop.Name == "material_id":
                 return prop.NominalValue.wrappedValue
         return None
 
@@ -132,7 +132,7 @@ class MaterialBuilder:
     def _create_identity_pset(self, ifc_material, material, company_id, company, verxml):
         properties = [
             self.file.create_entity(
-                "IfcPropertySingleValue", Name="id", NominalValue=_ifc_text(self.file, material.id)
+                "IfcPropertySingleValue", Name="material_id", NominalValue=_ifc_text(self.file, material.id)
             ),
             self.file.create_entity(
                 "IfcPropertySingleValue", Name="company_id", NominalValue=_ifc_text(self.file, company_id)

@@ -80,7 +80,7 @@ def _identity_id(file, material_entity):
         if material_entity not in materials:
             continue
         for prop in pset.Properties:
-            if prop.Name == "id":
+            if prop.Name == "material_id":
                 return prop.NominalValue.wrappedValue
     return None
 
