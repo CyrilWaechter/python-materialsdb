@@ -235,8 +235,8 @@ def purge_material(file, material) -> None:
             for parent in layer_sets:
                 if not parent.MaterialLayers:
                     file.remove(parent)
-    for material in [m for m in file.by_type("IfcMaterial") if m.id() in target]:
-        file.remove(material)
+    for stale in [m for m in file.by_type("IfcMaterial") if m.id() in target]:
+        file.remove(stale)
 
 
 def add_material(file, material, company_id="", company="", verxml=None, replace=False, layer_ids=None):
