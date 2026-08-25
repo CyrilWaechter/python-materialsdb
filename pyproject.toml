@@ -1,8 +1,46 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.black]
+[project]
+name = "python-materialsdb"
+version = "0.1.0"
+description = "A library to work with materialsdb.org open standard for building materials."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Cyril Waechter", email = "cyrwae@hotmail.com" }]
+keywords = ["materials", "BIM", "ifcopenshell", "IFC"]
+dependencies = ["lxml"]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Homepage = "https://github.com/CyrilWaechter/python-materialsdb"
+"Bug Tracker" = "https://github.com/CyrilWaechter/python-materialsdb/issues"
+Community = "https://community.osarch.org/"
+
+[project.optional-dependencies]
+ifc = ["ifcopenshell"]
+dev = [
+    "pytest",
+    "pytest-benchmark",
+    "ruff==0.16.4",
+    "ty==0.0.74",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.xsd"]
 
 [tool.pytest.ini_options]
 testpaths = [
