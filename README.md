@@ -62,6 +62,12 @@ Launch the local web application (stdlib only, no extra dependencies):
 materialsdb-gui            # opens http://127.0.0.1:8619 in your browser
 ```
 
+Or run straight from a source checkout without installing:
+
+```bash
+PYTHONPATH=src python3 -m materialsdb.gui
+```
+
 Browse, sort and filter all cached materials; multi-select then either export
 a standalone `.ifc`, or open one of your own `.ifc` files and append the
 selected materials into it. The same HTTP API powers future BIM software
