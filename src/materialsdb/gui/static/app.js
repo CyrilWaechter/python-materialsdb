@@ -1,6 +1,8 @@
 const TOKEN = window.MATERIALSDB_TOKEN;
 const $ = (id) => document.getElementById(id);
 const selected = new Set();
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -34,9 +36,9 @@ async function loadTable() {
   materials.forEach((m) => {
     const tr = document.createElement("tr");
     const usage = Object.entries(m.usage).filter(([, v]) => v).map(([k]) => k[0].toUpperCase()).join("");
-    tr.innerHTML = `<td><input type="checkbox"></td><td></td><td>${m.company}</td>` +
-      `<td>${m.category}</td><td>${m.type}</td>` +
-      `<td>${fmt([m.lambda_min, m.lambda_max])}</td><td>${fmt([m.thick_min, m.thick_max], 0)}</td><td>${usage}</td>`;
+    tr.innerHTML = `<td><input type="checkbox"></td><td></td><td>${esc(m.company)}</td>` +
+      `<td>${esc(m.category)}</td><td>${esc(m.type)}</td>` +
+      `<td>${esc(fmt([m.lambda_min, m.lambda_max]))}</td><td>${esc(fmt([m.thick_min, m.thick_max], 0))}</td><td>${esc(usage)}</td>`;
     const [checkbox] = tr.getElementsByTagName("input");
     checkbox.onchange = () => (checkbox.checked ? selected.add(m.id) : selected.delete(m.id));
     tr.addEventListener("click", (event) => {
@@ -57,7 +59,7 @@ async function showDetail(id) {
     ["lambda", fmt([m.lambda_min, m.lambda_max])], ["thickness mm", fmt([m.thick_min, m.thick_max], 0)],
     ["U-value", fmt(m.u_value_without)], ["consref", m.consref], ["design usage", m.designusage]];
   $("detail").innerHTML = pairs.filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .map(([k, v]) => `<dt>${k}</dt><dd>${String(v)}</dd>`).join("");
+    .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
 }
 
 async function pickIds(action) {
