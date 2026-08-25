@@ -9,6 +9,7 @@ python-materialsdb is an unofficial python library for [materialsdb.org][1] an o
 * cache.py : cache latest materials data from producers
 * config.py : set and get user config as language and country
 * ifc/project_library.py : convert deserialised source into IFC (IfcProjectLibrary)
+* gui/server.py : stdlib-only web application to browse and export cached materials (materialsdb-gui)
 
 ## devutils
 * classes_generator.py : generate classes (dataclasses except for simple type) for materialsdb*.xsd elements
@@ -53,6 +54,18 @@ add_material(existing_ifc_file, material, company="Producer")   # idempotent app
 file = create_material_file("<materialsdb-id>")                 # standalone .ifc
 file.write("single_material.ifc")
 ```
+
+# Material picker GUI :
+Launch the local web application (stdlib only, no extra dependencies):
+
+```bash
+materialsdb-gui            # opens http://127.0.0.1:8619 in your browser
+```
+
+Browse, sort and filter all cached materials; multi-select then either export
+a standalone `.ifc`, or open one of your own `.ifc` files and append the
+selected materials into it. The same HTTP API powers future BIM software
+plugins (all mutating calls require a per-launch token).
 
 # How to install
 ## Using pip
