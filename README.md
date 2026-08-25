@@ -40,6 +40,20 @@ rows = query.search("isolant", sort="lambda")     # filtered, sorted summaries
 material = query.get_material(rows[0].id)         # full material dataclass
 ```
 
+# Create a single material in IFC :
+Append one material into an existing ifcopenshell file (idempotent), or build a minimal standalone file.
+
+```python
+from materialsdb import query
+from materialsdb.ifc.material_builder import add_material, create_material_file
+
+material = query.get_material("<materialsdb-id>")
+
+add_material(existing_ifc_file, material, company="Producer")   # idempotent append
+file = create_material_file("<materialsdb-id>")                 # standalone .ifc
+file.write("single_material.ifc")
+```
+
 # How to install
 ## Using pip
 ```bash
