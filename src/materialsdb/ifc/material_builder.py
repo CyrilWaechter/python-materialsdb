@@ -214,11 +214,13 @@ def _materials_of(pset):
     return materials
 
 
-def purge_material(file, material_entity) -> None:
+def purge_material(file, material) -> None:
     """Remove one IfcMaterial and everything the builder created for it.
 
+    `material` is the guid string of an IfcMaterial currently present in the
+    file (passing a stale/removed wrapper would segfault ifcopenshell).
     Shared surface styles are intentionally kept."""
-    target = {m.id() for m in file.by_type("IfcMaterial") if m == material_entity}
+    target = {m.id() for m in file.by_type("IfcMaterial") if m.id() == material}
     for pset in list(file.by_type("IfcMaterialProperties")):
         if {m.id() for m in _materials_of(pset)} & target:
             # file.remove() does not cascade to pset.Properties on ifcopenshell
@@ -246,7 +248,7 @@ def add_material(file, material, company_id="", company="", verxml=None, replace
         # one source material can yield several IfcMaterial entities (one per
         # layer): purge them all before rebuilding
         while existing is not None:
-            purge_material(file, existing)
+            purge_material(file, existing.id())
             existing = builder.find_existing(str(material.id))
     created = builder.build(material, company_id=company_id, company=company, verxml=verxml, layer_ids=layer_ids)
     return created[0] if created else None

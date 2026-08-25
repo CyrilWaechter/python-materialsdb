@@ -132,10 +132,12 @@ function matchesFacets(m) {
   return true;
 }
 
+let renderGeneration = 0;
+
 async function applyModel() {
+  const generation = ++renderGeneration;
   const needle = $("text").value.trim().toLowerCase();
   const rowsEl = $("rows");
-  rowsEl.innerHTML = "";
   const matching = [];
   for (const m of allMaterials) {
     if (!matchesFacets(m)) continue;
@@ -143,7 +145,16 @@ async function applyModel() {
         m.company.toLowerCase().includes(needle) || m.category.toLowerCase().includes(needle))) continue;
     matching.push(m);
   }
-  const details = new Map(await Promise.all([...expanded].map(async (id) => [id, await getDetail(id)])));
+  let details;
+  try {
+    details = new Map(await Promise.all([...expanded].map(async (id) => [id, await getDetail(id)])));
+  } catch (err) {
+    if (generation !== renderGeneration) return;
+    setStatus(`detail load failed: ${err.message}`);
+    return;
+  }
+  if (generation !== renderGeneration) return; // a newer render superseded this one
+  rowsEl.innerHTML = "";
   let visible = 0;
   for (const m of matching) {
     visible += 1;

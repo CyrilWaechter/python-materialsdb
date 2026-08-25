@@ -294,3 +294,16 @@ def test_detail_type_specific_arrays(api):
 
     _, payload = request(server, "GET", "/api/materials/00000000-0000-0000-0000-000000000005")
     assert payload["variations"] == []
+
+
+def test_non_dict_item_rejected(api):
+    server, state = api
+    status, payload = request(
+        server,
+        "POST",
+        "/api/export",
+        payload={"items": ["00000000-0000-0000-0000-000000000001"]},
+        token=state.token,
+    )
+    assert status == 400
+    assert "invalid item" in payload["error"]

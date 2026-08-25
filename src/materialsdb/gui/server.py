@@ -217,6 +217,9 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             crd=utils.new_tdatetime(),
         )
         for item in items:
+            if not isinstance(item, dict):
+                self._send(400, {"error": f"invalid item: {item!r}"})
+                return
             material_id = item.get("id")
             summary = store_.get_summary(material_id)
             material = store_.get(material_id)
@@ -271,6 +274,9 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         added = 0
         missing = []
         for item in items:
+            if not isinstance(item, dict):
+                self._send(400, {"error": f"invalid item: {item!r}"})
+                return
             material_id = item.get("id")
             summary = store_.get_summary(material_id)
             material = store_.get(material_id)

@@ -176,7 +176,7 @@ def test_purge_keeps_shared_styles(mini_source):
     # Capture ids before purging: wrappers of removed entities dangle in ifcopenshell
     a_id = a[0].id()
     b_id = b[0].id()
-    purge_material(file, a[0])
+    purge_material(file, a[0].id())
 
     # IfcMaterial has no GlobalId (not an IfcRoot subtype): identify by STEP id
     remaining = {m.id() for m in file.by_type("IfcMaterial")}
