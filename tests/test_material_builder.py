@@ -259,9 +259,7 @@ def test_org_layer_pset_exposes_layer_id_and_thickness(mini_source):
 
     builder.build(material, company="Mini SA")
 
-    org_layer_psets = [
-        pset for pset in file.by_type("IfcMaterialProperties") if pset.Name == "materialsdb.org_layer"
-    ]
+    org_layer_psets = [pset for pset in file.by_type("IfcMaterialProperties") if pset.Name == "materialsdb.org_layer"]
     assert len(org_layer_psets) == 2  # one per layer of Isolant A
     by_layer_id = {}
     for pset in org_layer_psets:
