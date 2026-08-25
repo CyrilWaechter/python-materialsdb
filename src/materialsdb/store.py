@@ -47,6 +47,8 @@ _MATERIAL_COLUMNS = (
     "xml",
 )
 _COLUMN_LIST = ", ".join(_MATERIAL_COLUMNS)
+_LISTING_COLUMNS = tuple(column for column in _MATERIAL_COLUMNS if column != "xml")
+_LISTING_COLUMN_LIST = ", ".join(_LISTING_COLUMNS)
 
 _NUMERIC_SORTS = {"lambda": "lambda_min", "thick": "thick_min"}
 _STRING_SORTS = {"company": "company", "category": "category", "id": "id"}
@@ -198,7 +200,7 @@ class MaterialStore:
         if max_thick is not None:
             add("thick_min<=?", max_thick)
 
-        query = f"SELECT {_COLUMN_LIST} FROM materials"
+        query = f"SELECT {_LISTING_COLUMN_LIST} FROM materials"
         if where:
             query += " WHERE " + " AND ".join(where)
         rows = self.connection.execute(query, params).fetchall()
@@ -250,9 +252,7 @@ class MaterialStore:
             thick_min,
             thick_max,
             usage,
-            _source_file,
-            _xml,
-        ) = row
+        ) = row[:12]  # listing rows exclude the trailing xml BLOB column
         return MaterialSummary(
             id=id_,
             company_id=company_id,
@@ -277,7 +277,7 @@ class MaterialStore:
 
     def get_summary(self, material_id: str) -> MaterialSummary | None:
         row = self.connection.execute(
-            f"SELECT {', '.join(_MATERIAL_COLUMNS)} FROM materials WHERE id=?",
+            f"SELECT {_LISTING_COLUMN_LIST} FROM materials WHERE id=?",
             (material_id,),
         ).fetchone()
         if row is None:
