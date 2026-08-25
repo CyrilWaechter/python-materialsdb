@@ -85,6 +85,7 @@ Create `tests/test_construction.py`:
 
 ```python
 import math
+import pathlib
 
 import pytest
 
@@ -100,6 +101,9 @@ from materialsdb.construction import (
 def pinned_fr_ch_config(monkeypatch):
     monkeypatch.setattr("materialsdb.config.get_lang", lambda: "fr")
     monkeypatch.setattr("materialsdb.config.get_country", lambda: "CH")
+
+
+_MINI_XML_PATH = pathlib.Path(__file__).parent / "fixtures" / "mini_producer.xml"
 
 
 @pytest.fixture
@@ -144,7 +148,8 @@ def test_design_usage_selects_rsi(store):
 
 
 def test_missing_lambda_layers_flagged_and_excluded(store, mixed_xml):
-    store.refresh(paths=[mixed_xml])
+    # combined refresh: passing a SUBSET would delete previously indexed rows
+    store.refresh(paths=[_MINI_XML_PATH, mixed_xml])
     construction = Construction(
         name="with btk",
         design_usage=None,
@@ -309,7 +314,7 @@ git commit -m "feat: construction stack model with preset-based u-value math"
 - Modify: `tests/test_construction.py`
 
 **Interfaces:**
-- Consumes: Task 1 model; `MaterialBuilder.build(material, ..., layer_ids=[first_layer_guid])` (single representative variant -> exactly one IfcMaterial per referenced material, identity pset included); `ProjectLibrary.create_project_library(company, companyid, ver, crd)`
+- Consumes: Task 1 model; `MaterialBuilder.build(..., with_layers=False)` (NEW flag this task adds: builds IfcMaterial + identity pset WITHOUT any IfcMaterialLayer/Set, so construction thicknesses stay authoritative); `ProjectLibrary.create_project_library(company, companyid, ver, crd)`
 - Produces:
 
 ```python
@@ -327,6 +332,18 @@ Append to `tests/test_construction.py`:
 
 ```python
 pytest.importorskip("ifcopenshell")
+
+
+def test_build_with_layers_false_creates_material_only(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+
+    created = builder.build(mini_source.material[0], company="Mini SA", with_layers=False)
+
+    assert len(created) == 1
+    assert file.by_type("IfcMaterialLayer") == []
+    identity = [p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
+    assert len(identity) == 1
 
 
 def test_to_ifc_layer_set_roundtrip(store, tmp_path):
@@ -369,7 +386,16 @@ Run: FAIL (`ImportError: to_ifc_layer_set`).
 
 - [ ] **Step 2: Implement**
 
-Append to `src/materialsdb/construction.py`:
+First extend `src/materialsdb/ifc/material_builder.py`: `build()` gains `with_layers=True`; when False it creates ONLY the IfcMaterial + identity pset (no style/context/layers) and returns `[ifc_material]`. Insert as first statements after resolving name/description/category:
+
+```python
+        if not with_layers:
+            ifc_material = self.file.createIfcMaterial(name, str(description), str(category))
+            self._create_identity_pset(ifc_material, material, company_id, company, verxml)
+            return [ifc_material]
+```
+
+Then append to `src/materialsdb/construction.py`:
 
 ```python
 def to_ifc_layer_set(construction: Construction, store_, file=None):
@@ -409,12 +435,14 @@ def to_ifc_layer_set(construction: Construction, store_, file=None):
     builder = MaterialBuilder(target_file)
     material_layers = []
     for layer in construction.layers:
-        material = store_.get(layer.material_id)
-        first_guid = str(material.layers.layer[0].id)
-        created = builder.build(material, company_id=str(store_.get_summary(layer.material_id).company_id),
-                                company=store_.get_summary(layer.material_id).company,
-                                layer_ids={first_guid})
-        assert len(created) == 1, "layer_ids subset must yield exactly one IfcMaterial"
+        summary = store_.get_summary(layer.material_id)
+        created = builder.build(
+            material,
+            company_id=str(summary.company_id),
+            company=summary.company,
+            with_layers=False,
+        )
+        assert len(created) == 1, "with_layers=False must yield exactly one IfcMaterial"
         name = store_.get_summary(layer.material_id).names.get(config.get_lang()) or ""
         element_name = f"{name} | {round(layer.thickness_m * 1000)} mm"
         ifc_layer = target_file.create_entity(
