@@ -127,7 +127,8 @@ def test_export_multi_material_roundtrip(api, tmp_path):
         server,
         "POST",
         "/api/export",
-        payload={"ids": ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]},
+        payload={"items": [{"id": "00000000-0000-0000-0000-000000000001"},
+                           {"id": "00000000-0000-0000-0000-000000000002"}]},
         token=state.token,
     )
     assert status == 200
@@ -138,9 +139,9 @@ def test_export_multi_material_roundtrip(api, tmp_path):
     assert names == ["Beton B", "Isolant A", "Isolant A"]
 
 
-def test_export_requires_ids(api):
+def test_export_requires_items(api):
     server, state = api
-    status, _ = request(server, "POST", "/api/export", payload={"ids": []}, token=state.token)
+    status, _ = request(server, "POST", "/api/export", payload={"items": []}, token=state.token)
     assert status == 400
 
 
@@ -164,7 +165,11 @@ def test_session_open_pick_save_flow(api, tmp_path):
     assert status == 200
 
     status, payload = request(
-        server, "POST", "/api/pick", payload={"ids": ["00000000-0000-0000-0000-000000000001"]}, token=token
+        server,
+        "POST",
+        "/api/pick",
+        payload={"items": [{"id": "00000000-0000-0000-0000-000000000001"}]},
+        token=token,
     )
     assert status == 200 and payload["added"] == 1
 
@@ -174,6 +179,36 @@ def test_session_open_pick_save_flow(api, tmp_path):
 
     reopened = ifcopenshell.open(str(save_as))
     assert {m.Name for m in reopened.by_type("IfcMaterial")} >= {"Isolant A", "Beton B"}
+
+
+def test_pick_with_layer_subset(api, tmp_path):
+    import ifcopenshell
+
+    server, state = api
+    from materialsdb.ifc.material_builder import create_material_file
+
+    target = create_material_file("00000000-0000-0000-0000-000000000002", store_=state.resolve_store())
+    target_path = tmp_path / "p.ifc"
+    target.write(str(target_path))
+    await_open = request(server, "POST", "/api/session/open", payload={"path": str(target_path)}, token=state.token)
+    assert await_open[0] == 200
+
+    status, payload = request(
+        server,
+        "POST",
+        "/api/pick",
+        payload={"items": [{"id": "00000000-0000-0000-0000-000000000001",
+                             "layer_ids": ["00000000-0000-0000-0000-0000000000a2"]}]},
+        token=state.token,
+    )
+    assert status == 200 and payload["added"] == 1
+
+    save_as = tmp_path / "subset.ifc"
+    request(server, "POST", "/api/session/save", payload={"path": str(save_as)}, token=state.token)
+    reopened = ifcopenshell.open(str(save_as))
+    descriptions = {layer.Description for layer in reopened.by_type("IfcMaterialLayer")}
+    assert "00000000-0000-0000-0000-0000000000a2" in descriptions
+    assert "00000000-0000-0000-0000-0000000000a1" not in descriptions
 
 
 def test_pick_without_session_conflicts(api):
@@ -186,7 +221,7 @@ def test_pick_without_session_conflicts(api):
         server,
         "POST",
         "/api/pick",
-        payload={"ids": ["00000000-0000-0000-0000-000000000001"]},
+        payload={"items": [{"id": "00000000-0000-0000-0000-000000000001"}]},
         token=fresh.token,
     )
     assert status == 409

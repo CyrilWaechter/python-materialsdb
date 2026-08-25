@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>materialsdb picker</title>
 <style>
- body { font-family: sans-serif; margin: 1rem; display: flex; gap: 1rem; }
+ body { font-family: sans-serif; margin: 1rem; display: flex; flex-wrap: wrap; gap: 1rem; }
  #left { flex: 3; } #right { flex: 2; }
  table { border-collapse: collapse; width: 100%; }
  th, td { border: 1px solid #ccc; padding: .25rem .5rem; text-align: left; cursor: pointer; }
@@ -17,6 +17,9 @@
  #status { color: #06c; min-height: 1.2em; }
  .facet { position:absolute; background:#fff; border:1px solid #999; padding:.35rem; z-index:5; max-height:14rem; overflow:auto; }
  thead th { position: relative; }
+ tr.layerrow td { padding-left: 2rem; color: #555; background: #fafcff; }
+ #drawer { border-top: 2px solid #99c; padding: .5rem; background: #fdfdff; }
+ .stackbar { display: flex; height: 44px; border: 1px solid #999; margin: .3rem 0; }
 </style>
 </head>
 <body>
@@ -36,8 +39,8 @@
  <table><thead><tr id="header-row"></tr></thead>
  <tbody id="rows"></tbody></table>
 </div>
-<aside id="right"><h3>detail</h3><dl id="detail"></dl></aside>
-<div id="drawer" style="display:none"></div>
+<aside id="right"><h3>detail <button id="preview" style="display:none;float:right">preview stack</button></h3><dl id="detail"></dl></aside>
+<div id="drawer" style="display:none;flex-basis:100%"></div>
 <script>window.MATERIALSDB_TOKEN = "__TOKEN__";</script>
 <script src="/app.js"></script>
 </body>

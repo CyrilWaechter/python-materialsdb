@@ -205,9 +205,9 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         from materialsdb import utils
         from materialsdb.ifc.project_library import ProjectLibrary
 
-        ids = payload.get("ids") or []
-        if not ids:
-            self._send(400, {"error": "ids required"})
+        items = payload.get("items") or []
+        if not items:
+            self._send(400, {"error": "items required"})
             return
         library = ProjectLibrary()
         library.create_project_library(
@@ -216,12 +216,19 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             ver=1,
             crd=utils.new_tdatetime(),
         )
-        for material_id in ids:
+        for item in items:
+            material_id = item.get("id")
             summary = store_.get_summary(material_id)
             material = store_.get(material_id)
             if summary is None or material is None:
                 continue
-            add_material(library.file, material, company_id=summary.company_id or "", company=summary.company)
+            add_material(
+                library.file,
+                material,
+                company_id=summary.company_id or "",
+                company=summary.company,
+                layer_ids=item.get("layer_ids"),
+            )
         handle = tempfile.NamedTemporaryFile(suffix=".ifc", delete=False)  # noqa: SIM115 - closed immediately
         handle.close()
         try:
@@ -256,14 +263,15 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         if self.state.file is None:
             self._send(409, {"error": "no session open"})
             return
-        ids = payload.get("ids") or []
-        if not ids:
-            self._send(400, {"error": "ids required"})
+        items = payload.get("items") or []
+        if not items:
+            self._send(400, {"error": "items required"})
             return
         replace = bool(payload.get("replace"))
         added = 0
         missing = []
-        for material_id in ids:
+        for item in items:
+            material_id = item.get("id")
             summary = store_.get_summary(material_id)
             material = store_.get(material_id)
             if summary is None or material is None:
@@ -275,6 +283,7 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 company_id=summary.company_id or "",
                 company=summary.company,
                 replace=replace,
+                layer_ids=item.get("layer_ids"),
             )
             added += 1
         self._send(200, {"added": added, "missing": missing})
