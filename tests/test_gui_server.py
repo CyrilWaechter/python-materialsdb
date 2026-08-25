@@ -127,8 +127,9 @@ def test_export_multi_material_roundtrip(api, tmp_path):
         server,
         "POST",
         "/api/export",
-        payload={"items": [{"id": "00000000-0000-0000-0000-000000000001"},
-                           {"id": "00000000-0000-0000-0000-000000000002"}]},
+        payload={
+            "items": [{"id": "00000000-0000-0000-0000-000000000001"}, {"id": "00000000-0000-0000-0000-000000000002"}]
+        },
         token=state.token,
     )
     assert status == 200
@@ -197,8 +198,11 @@ def test_pick_with_layer_subset(api, tmp_path):
         server,
         "POST",
         "/api/pick",
-        payload={"items": [{"id": "00000000-0000-0000-0000-000000000001",
-                             "layer_ids": ["00000000-0000-0000-0000-0000000000a2"]}]},
+        payload={
+            "items": [
+                {"id": "00000000-0000-0000-0000-000000000001", "layer_ids": ["00000000-0000-0000-0000-0000000000a2"]}
+            ]
+        },
         token=state.token,
     )
     assert status == 200 and payload["added"] == 1
