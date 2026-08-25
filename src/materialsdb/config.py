@@ -1,14 +1,11 @@
+import json
 import os
 import pathlib
-import json
-from typing import Dict
 
 
 def get_config_dir():
     config_dir = pathlib.Path(
-        os.environ.get("APPDATA")
-        or os.environ.get("XDG_CACHE_HOME")
-        or pathlib.Path.home() / ".config"
+        os.environ.get("APPDATA") or os.environ.get("XDG_CACHE_HOME") or pathlib.Path.home() / ".config"
     ).joinpath(
         "materialsdb",
     )
@@ -20,7 +17,7 @@ def get_base_config_path() -> pathlib.Path:
     return get_config_dir() / "config.json"
 
 
-def get_base_config() -> Dict[str, str]:
+def get_base_config() -> dict[str, str]:
     base_config_path = get_base_config_path()
     if base_config_path.exists():
         return json.loads(get_base_config_path().read_text("utf-8"))

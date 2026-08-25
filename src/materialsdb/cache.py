@@ -2,7 +2,7 @@ import os
 import pathlib
 import urllib.request
 from collections import namedtuple
-from typing import Optional
+
 from lxml import etree
 
 MATERIALSDBINDEXURLLIST = [
@@ -13,9 +13,7 @@ MATERIALSDBINDEXURLLIST = [
 
 def get_cache_folder():
     cache_dir = pathlib.Path(
-        os.environ.get("APPDATA")
-        or os.environ.get("XDG_CACHE_HOME")
-        or pathlib.Path.home() / ".cache"
+        os.environ.get("APPDATA") or os.environ.get("XDG_CACHE_HOME") or pathlib.Path.home() / ".cache"
     ).joinpath(
         "materialsdb",
     )
@@ -35,7 +33,7 @@ def parse_cached_index(index) -> etree._ElementTree:
     return etree.ElementTree(root)
 
 
-def get_by_id(root: etree._Element, id: str) -> Optional[etree._Element]:
+def get_by_id(root: etree._Element, id: str) -> etree._Element | None:
     for company in root:
         if company.get("id") == id:
             return company

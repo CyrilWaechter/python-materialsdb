@@ -24,9 +24,7 @@ def test_refresh_populates_all_materials(store):
 def test_get_returns_full_material_equivalent_to_direct_parse(store, mini_source):
     material = store.get("00000000-0000-0000-0000-000000000001")
     original = mini_source.material[0]
-    assert str(material.information.names.name[0]) == str(
-        original.information.names.name[0]
-    )
+    assert str(material.information.names.name[0]) == str(original.information.names.name[0])
     assert material.information.group == "Insulation"
     assert material.layers.layer[0].thermal[0].lambda_value == 0.036
 

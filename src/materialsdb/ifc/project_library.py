@@ -1,16 +1,15 @@
-import uuid
-import datetime
 import json
+import uuid
 from pathlib import Path
+
 import ifcopenshell
 import ifcopenshell.api
 
-from materialsdb.serialiser import XmlDeserialiser
 from materialsdb import config, utils
 from materialsdb.classes import (
     Materials,
-    Material,
 )
+from materialsdb.serialiser import XmlDeserialiser
 
 CATEGORIES = {
     "Others": {"hatch": "", "color": (255, 255, 255)},
@@ -109,20 +108,16 @@ class ProjectLibrary:
         )
 
         # https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/link/ifcorganization.htm
-        organisation = file.createIfcOrganization(
-            Identification=source.companyid, Name=source.company, Roles=[role]
-        )
+        organisation = file.createIfcOrganization(Identification=source.companyid, Name=source.company, Roles=[role])
 
         # https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/link/ifcpersonandorganization.htm
-        person_and_organisation = file.createIfcPersonAndOrganization(
-            person, organisation, Roles=[role]
-        )
+        person_and_organisation = file.createIfcPersonAndOrganization(person, organisation, Roles=[role])
 
         # https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/link/ifcownerhistory.htm
         owner_history = file.createIfcOwnerHistory(
             OwningUser=person_and_organisation,
             OwningApplication=self.application,
-            CreationDate=max(int(utils.date_from_xml(source.crd).timestamp()),-2147483648),
+            CreationDate=max(int(utils.date_from_xml(source.crd).timestamp()), -2147483648),
         )
         self.owner_history = owner_history
 
@@ -170,9 +165,7 @@ class ProjectLibrary:
                                 file.create_entity(
                                     "IfcPropertySingleValue",
                                     Name=prop_name,
-                                    NominalValue=file.create_entity(
-                                        primary_measure_type, value * unit_factor
-                                    ),
+                                    NominalValue=file.create_entity(primary_measure_type, value * unit_factor),
                                 )
                             )
                     if not properties:
@@ -253,9 +246,7 @@ class ProjectLibrary:
         file = self.file
         if color:
             name = f"color {color}"
-            style = file.createIfcSurfaceStyleShading(
-                SurfaceColour=self.color_xml_to_ifc(color)
-            )
+            style = file.createIfcSurfaceStyleShading(SurfaceColour=self.color_xml_to_ifc(color))
         else:
             if not category:
                 category = "Others"
@@ -264,9 +255,7 @@ class ProjectLibrary:
                 if style.Name == name:
                     return style
             style = file.createIfcSurfaceStyleShading(
-                SurfaceColour=self.file.createIfcColourRgb(
-                    None, *CATEGORIES[category]["color"]
-                ),
+                SurfaceColour=self.file.createIfcColourRgb(None, *CATEGORIES[category]["color"]),
             )
         for surface_style in file.by_type("IfcSurfaceStyle"):
             if surface_style.Name == name:
@@ -276,9 +265,7 @@ class ProjectLibrary:
     def color_xml_to_ifc(self, color: int):
         """Color definition in xml is obscur. We assume that it is a decimal color.
         See: https://stackoverflow.com/a/2262152/4098083"""
-        return self.file.createIfcColourRgb(
-            Blue=color & 255, Green=(color >> 8) & 255, Red=(color >> 16) & 255
-        )
+        return self.file.createIfcColourRgb(Blue=color & 255, Green=(color >> 8) & 255, Red=(color >> 16) & 255)
 
 
 def create_project_library_from_xml(xml_path):

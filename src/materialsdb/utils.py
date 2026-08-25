@@ -1,14 +1,15 @@
 import datetime
-from typing import Generator
+from collections.abc import Generator
+
 from materialsdb.classes import (
+    ISO639_1,
+    Layer,
+    Material,
+    Materials,
+    Mimetype,
     TDateTime,
     TLocalizedString,
-    Mimetype,
     Webinfo,
-    ISO639_1,
-    Materials,
-    Material,
-    Layer,
 )
 
 
@@ -21,25 +22,19 @@ def date_to_xml(date: datetime.datetime) -> float:
     """Convert datetime to days since 30.12.1899 which is materialsdb xml convention
     >>> datetime.timedelta(days=1).total_seconds()
     86400.0"""
-    return (
-        date - datetime.datetime(1899, 12, 30, tzinfo=datetime.timezone.utc)
-    ).total_seconds() / 86400
+    return (date - datetime.datetime(1899, 12, 30, tzinfo=datetime.timezone.utc)).total_seconds() / 86400
 
 
 def new_tdatetime():
     return TDateTime(date_to_xml(datetime.datetime.now(datetime.timezone.utc)))
 
 
-def get_materials(
-    materials: Materials, country: str, include_outdated=False
-) -> Generator[Material, None, None]:
+def get_materials(materials: Materials, country: str, include_outdated=False) -> Generator[Material, None, None]:
     for material in materials.material:
         if include_outdated:
             yield material
             continue
-        material_countries = getattr(
-            getattr(material.information, "countries", ()), "country", ()
-        )
+        material_countries = getattr(getattr(material.information, "countries", ()), "country", ())
         if not material_countries:
             yield material
             continue
@@ -50,7 +45,7 @@ def get_materials(
             continue
         current_datetime = date_to_xml(datetime.datetime.now(tz=datetime.timezone.utc))
         selling_from = material_country.sellingfrom
-        selling_until = getattr(material_country, "sellinguntil", None) or 10 ** 66
+        selling_until = getattr(material_country, "sellinguntil", None) or 10**66
         if selling_from < current_datetime and selling_until > current_datetime:
             yield material
 

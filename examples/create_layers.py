@@ -1,7 +1,8 @@
 import uuid
+
 from materialsdb import utils
-from materialsdb.serialiser import XmlSerialiser
 from materialsdb.classes import *
+from materialsdb.serialiser import XmlSerialiser
 
 materials = Materials(
     company="MyCompany",

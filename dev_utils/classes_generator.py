@@ -8,19 +8,19 @@ See the LICENSE.md file for more details.
 
 Author : Cyril Waechter
 """
-from pathlib import Path
+
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
-from lxml import etree
+from pathlib import Path
+
 from lxml import objectify
 
 
 @dataclass
 class PyAttr:
-    with_default: List[str] = field(default_factory=list)
-    without_default: List[str] = field(default_factory=list)
-    xml_attributes: List[str] = field(default_factory=list)
-    xml_elements: List[str] = field(default_factory=list)
+    with_default: list[str] = field(default_factory=list)
+    without_default: list[str] = field(default_factory=list)
+    xml_attributes: list[str] = field(default_factory=list)
+    xml_elements: list[str] = field(default_factory=list)
 
     def __str__(self):
         return "\n    ".join(self.without_default + self.with_default)
@@ -81,7 +81,7 @@ from typing import Tuple, Optional, List
         simple_types = self.simple_types
         for simple_type in element.simpleType:
             pyattr = PyAttr()
-            pyattr.with_default.append(f'xs_type: str = "simpleType"')
+            pyattr.with_default.append('xs_type: str = "simpleType"')
             # xs:restriction
             restrict = simple_type.restriction
             base_type = restrict.get("base")
@@ -96,7 +96,7 @@ from typing import Tuple, Optional, List
             self.file.write(
                 f"""
 class {class_name}({parent_class_name}):
-    {str(pyattr)}
+    {pyattr!s}
 
 """
             )
@@ -108,9 +108,7 @@ class {class_name}({parent_class_name}):
             value = enum.get("value")
             values.append(value)
         if values:
-            pyattr.with_default.append(
-                f"xml_enum: Tuple[str, ...] = {str(tuple(values))}"
-            )
+            pyattr.with_default.append(f"xml_enum: Tuple[str, ...] = {tuple(values)!s}")
 
     def parse_pattern(self, element, pyattr: PyAttr):
         """xs:pattern"""
@@ -132,7 +130,7 @@ class {class_name}({parent_class_name}):
             if complex_type in complex_types:
                 continue
             pyattr = PyAttr()
-            pyattr.with_default.append(f'xs_type: str = "complexType"')
+            pyattr.with_default.append('xs_type: str = "complexType"')
             name: str = complex_type.get("name")
             class_name = self.cls_name(name)
             complex_types.append(name)
@@ -142,14 +140,12 @@ class {class_name}({parent_class_name}):
                 self.parse_complex_by_name(base_type, pyattr)
             parent_class_name = self.get_py_type_as_string(base_type)
             self.parse_attrib(extension, pyattr)
-            pyattr.with_default.append(
-                f"xml_attributes: Tuple[str, ...] = {str(tuple(pyattr.xml_attributes))}"
-            )
+            pyattr.with_default.append(f"xml_attributes: Tuple[str, ...] = {tuple(pyattr.xml_attributes)!s}")
             pyattr.with_default.append(f'xml_name: str = "{name}"')
             self.file.write(
                 f"""
 class {class_name}({parent_class_name}):
-    {str(pyattr)}
+    {pyattr!s}
     def __new__(cls, object, *args, **kwargs):
         obj = {parent_class_name}.__new__(cls, object)
         for arg_name, arg_value in zip({pyattr.xml_attributes}, args):
@@ -179,7 +175,7 @@ class {class_name}({parent_class_name}):
             if use == "optional":
                 py_type = f"Optional[{py_type}]"
                 if not default_value:
-                    default_value = f" = None"
+                    default_value = " = None"
 
             text = f"{name}: {py_type}{default_value}"
             if default_value:
@@ -197,7 +193,7 @@ class {class_name}({parent_class_name}):
             return py_type.__name__
 
     def parse_root_elements(self):
-        self.elements_dict: Dict[str, objectify.ObjectifiedDataElement] = {}
+        self.elements_dict: dict[str, objectify.ObjectifiedDataElement] = {}
         for element in getattr(self.root, "element", ()):
             self.elements_dict[element.get("ref", element.get("name"))] = element
         for element_name, element in self.elements_dict.items():
@@ -207,11 +203,9 @@ class {class_name}({parent_class_name}):
 
     def parse_element(self, element):
         pyattr = PyAttr()
-        pyattr.with_default.append(f'xs_type: str = "element"')
+        pyattr.with_default.append('xs_type: str = "element"')
         self.parse_attrib(element, pyattr)
-        pyattr.with_default.append(
-            f"xml_attributes: Tuple[str, ...] = {str(tuple(pyattr.xml_attributes))}"
-        )
+        pyattr.with_default.append(f"xml_attributes: Tuple[str, ...] = {tuple(pyattr.xml_attributes)!s}")
         for child in element.iterdescendants(tag="{*}element"):
             default_value = ""
             ref = child.get("ref", None)
@@ -238,15 +232,13 @@ class {class_name}({parent_class_name}):
         name = element.get("name")
         cls_name = self.cls_name(name)
         pyattr.with_default.append(f'xml_name = "{name}"')
-        pyattr.with_default.append(
-            f"xml_elements: Tuple[str, ...] = {str(tuple(pyattr.xml_elements))}"
-        )
+        pyattr.with_default.append(f"xml_elements: Tuple[str, ...] = {tuple(pyattr.xml_elements)!s}")
         self.xml_elements.append(name)
         self.file.write(
             f"""
 @dataclass
 class {cls_name}:
-    {str(pyattr)}
+    {pyattr!s}
 
 """
         )
@@ -257,10 +249,7 @@ class {cls_name}:
 
     def is_element_optionnal(self, element):
         min_occurs = element.get("minOccurs", None)
-        return (
-            min_occurs == "0"
-            or element.getparent().tag == "{http://www.w3.org/2001/XMLSchema}choice"
-        )
+        return min_occurs == "0" or element.getparent().tag == "{http://www.w3.org/2001/XMLSchema}choice"
 
     def cls_name(self, name: str) -> str:
         return name if name[0].isupper() else name.title()

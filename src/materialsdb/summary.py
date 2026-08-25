@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
 
 from materialsdb import config, utils
 from materialsdb.classes import Material
@@ -13,23 +12,23 @@ class MaterialSummary:
     company_id: str
     company: str
     category: str
-    names: Dict[str, str]
-    descriptions: Dict[str, str]
-    lambda_min: Optional[float]
-    lambda_max: Optional[float]
-    thick_min: Optional[float]
-    thick_max: Optional[float]
-    usage: Dict[str, bool]
+    names: dict[str, str]
+    descriptions: dict[str, str]
+    lambda_min: float | None
+    lambda_max: float | None
+    thick_min: float | None
+    thick_max: float | None
+    usage: dict[str, bool]
 
 
-def _localized_dict(items) -> Dict[str, str]:
-    result: Dict[str, str] = {}
+def _localized_dict(items) -> dict[str, str]:
+    result: dict[str, str] = {}
     for item in items or ():
         result[str(item.lang or "")] = str(item)
     return result
 
 
-def _min_max(values) -> Tuple[Optional[float], Optional[float]]:
+def _min_max(values) -> tuple[float | None, float | None]:
     values = [v for v in values if v is not None]
     if not values:
         return None, None
@@ -40,7 +39,7 @@ def summarize_material(
     material: Material,
     company_id: str = "",
     company: str = "",
-    country: Optional[str] = None,
+    country: str | None = None,
 ) -> MaterialSummary:
     country = country or config.get_country()
     information = material.information
@@ -64,9 +63,7 @@ def summarize_material(
         company=str(company),
         category=str(information.group or ""),
         names=_localized_dict(getattr(information.names, "name", ())),
-        descriptions=_localized_dict(
-            getattr(getattr(information, "explanations", None), "explanation", ())
-        ),
+        descriptions=_localized_dict(getattr(getattr(information, "explanations", None), "explanation", ())),
         lambda_min=lambda_min,
         lambda_max=lambda_max,
         thick_min=thick_min,

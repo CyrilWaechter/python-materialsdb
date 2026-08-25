@@ -4,7 +4,6 @@ import json
 import sqlite3
 from collections import namedtuple
 from pathlib import Path
-from typing import List, Optional
 
 from lxml import etree, objectify
 
@@ -59,10 +58,8 @@ def _sha256(path: Path) -> str:
 class MaterialStore:
     SCHEMA_VERSION = SCHEMA_VERSION
 
-    def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = (
-            Path(db_path) if db_path else cache.get_cache_folder() / "materials.db"
-        )
+    def __init__(self, db_path: Path | None = None):
+        self.db_path = Path(db_path) if db_path else cache.get_cache_folder() / "materials.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(str(self.db_path))
         self.connection.execute("PRAGMA journal_mode=WAL")
@@ -72,9 +69,7 @@ class MaterialStore:
     # ---------- meta / lifecycle ----------
 
     def _ensure_schema_version(self):
-        row = self.connection.execute(
-            "SELECT value FROM meta WHERE key='schema_version'"
-        ).fetchone()
+        row = self.connection.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         stored = row[0] if row else None
         if stored != SCHEMA_VERSION:
             self.connection.execute("DROP TABLE IF EXISTS materials")
@@ -100,24 +95,16 @@ class MaterialStore:
 
         kept = {str(p) for p in paths}
         deleted = []
-        for (stored_path,) in self.connection.execute(
-            "SELECT path FROM producer_files"
-        ).fetchall():
+        for (stored_path,) in self.connection.execute("SELECT path FROM producer_files").fetchall():
             if stored_path not in kept:
-                self.connection.execute(
-                    "DELETE FROM materials WHERE source_file=?", (stored_path,)
-                )
-                self.connection.execute(
-                    "DELETE FROM producer_files WHERE path=?", (stored_path,)
-                )
+                self.connection.execute("DELETE FROM materials WHERE source_file=?", (stored_path,))
+                self.connection.execute("DELETE FROM producer_files WHERE path=?", (stored_path,))
                 deleted.append(Path(stored_path))
 
         existing, updated, skipped = [], [], []
         deserialiser = XmlDeserialiser()
         for path in paths:
-            row = self.connection.execute(
-                "SELECT sha256 FROM producer_files WHERE path=?", (str(path),)
-            ).fetchone()
+            row = self.connection.execute("SELECT sha256 FROM producer_files WHERE path=?", (str(path),)).fetchone()
             try:
                 digest = _sha256(path)
                 if not force and row and row[0] == digest:
@@ -143,17 +130,12 @@ class MaterialStore:
         tree = objectify.parse(str(path))
         root = get_valid_root(tree)
         source = deserialiser.from_element(root)
-        self.connection.execute(
-            "DELETE FROM materials WHERE source_file=?", (str(path),)
-        )
+        self.connection.execute("DELETE FROM materials WHERE source_file=?", (str(path),))
         for element in root.material:
             material = deserialiser.from_element(element)
-            summary = summarize_material(
-                material, company_id=str(source.companyid), company=source.company
-            )
+            summary = summarize_material(material, company_id=str(source.companyid), company=source.company)
             self.connection.execute(
-                f"INSERT INTO materials ({_COLUMN_LIST}) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO materials ({_COLUMN_LIST}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     summary.id,
                     summary.company_id,
@@ -186,7 +168,7 @@ class MaterialStore:
         sort="company",
         ascending=True,
         lang=None,
-    ) -> List[MaterialSummary]:
+    ) -> list[MaterialSummary]:
         where, params = [], []
 
         def add(condition, value):
@@ -218,17 +200,11 @@ class MaterialStore:
             results = [r for r in results if r.usage.get(usage)]
         if text:
             needle = text.lower()
-            results = [
-                r
-                for r in results
-                if needle in (r.names.get(lang) or r.names.get("") or "").lower()
-            ]
+            results = [r for r in results if needle in (r.names.get(lang) or r.names.get("") or "").lower()]
         return self._sorted(results, sort, ascending)
 
     @staticmethod
-    def _sorted(
-        results: List[MaterialSummary], sort: str, ascending: bool
-    ) -> List[MaterialSummary]:
+    def _sorted(results: list[MaterialSummary], sort: str, ascending: bool) -> list[MaterialSummary]:
         reverse = not ascending
         if sort == "name":
             return sorted(
@@ -280,10 +256,8 @@ class MaterialStore:
             usage=json.loads(usage),
         )
 
-    def get(self, material_id: str) -> Optional[Material]:
-        row = self.connection.execute(
-            "SELECT xml FROM materials WHERE id=?", (material_id,)
-        ).fetchone()
+    def get(self, material_id: str) -> Material | None:
+        row = self.connection.execute("SELECT xml FROM materials WHERE id=?", (material_id,)).fetchone()
         if row is None:
             return None
         element = objectify.fromstring(bytes(row[0]))

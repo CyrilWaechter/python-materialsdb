@@ -1,6 +1,6 @@
 """Convenience facade over the SQLite material store."""
+
 from functools import lru_cache
-from typing import List, Optional
 
 from materialsdb.classes import Material
 from materialsdb.store import MaterialStore, Report
@@ -12,11 +12,11 @@ def get_store() -> MaterialStore:
     return MaterialStore()
 
 
-def get_material(material_id: str) -> Optional[Material]:
+def get_material(material_id: str) -> Material | None:
     return get_store().get(material_id)
 
 
-def search(text: str, **filters) -> List[MaterialSummary]:
+def search(text: str, **filters) -> list[MaterialSummary]:
     return get_store().summaries(text=text, **filters)
 
 

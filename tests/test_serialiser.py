@@ -54,10 +54,7 @@ def test_from_xml_files_reports_corrupt_and_parses_rest(tmp_path, mini_xml):
     shutil.copy(mini_xml, good_b)
     bad.write_text("<materials><unclosed>", encoding="utf-8")
 
-    results = {
-        path.name: source
-        for path, source in XmlDeserialiser().from_xml_files([good_a, good_b, bad])
-    }
+    results = {path.name: source for path, source in XmlDeserialiser().from_xml_files([good_a, good_b, bad])}
 
     assert results["a.xml"] is not None
     assert len(results["a.xml"].material) == 3

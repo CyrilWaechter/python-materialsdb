@@ -1,4 +1,5 @@
 import json
+
 from ifcopenshell.util.pset import PsetQto
 
 psetqto = PsetQto("IFC4")

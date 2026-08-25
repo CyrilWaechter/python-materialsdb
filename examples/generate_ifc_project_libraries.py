@@ -1,6 +1,7 @@
 import os
 import platform
 import subprocess
+
 from materialsdb import cache, config
 from materialsdb.ifc import project_library
 
@@ -13,6 +14,7 @@ def open_folder(path):
     else:
         subprocess.Popen(["xdg-open", path])
 
+
 def update_cached_library(lang, country):
     config.set_lang(lang)
     config.set_country(country)
@@ -22,5 +24,6 @@ def update_cached_library(lang, country):
         ifc_folder = cache.get_cache_folder() / "IFC4" / f"{lang}_{country}"
         file.write(ifc_folder / producer.with_suffix(".ifc").name)
     open_folder(ifc_folder)
+
 
 update_cached_library("fr", "CH")

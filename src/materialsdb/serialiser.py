@@ -8,14 +8,15 @@ See the LICENSE.md file for more details.
 
 Author : Cyril Waechter
 """
-import re
-from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
-from pathlib import Path
-import typing
-from typing import Protocol, Tuple, Dict, Type, Optional, Any, Union
 
-from lxml import objectify, etree
+import re
+import typing
+from concurrent.futures import ThreadPoolExecutor
+from functools import cache
+from pathlib import Path
+from typing import Any
+
+from lxml import etree, objectify
 
 from materialsdb import classes
 
@@ -35,9 +36,7 @@ def create_element_maker():
         "xsi": "http://www.w3.org/2001/XMLSchema-instance",
         "SchemaLocation": "http://www.materialsdb.org/schemas/materialsdb103.xsd",
     }
-    return objectify.ElementMaker(
-        namespace="http://www.materialsdb.org", nsmap=nsmap, annotate=False
-    )
+    return objectify.ElementMaker(namespace="http://www.materialsdb.org", nsmap=nsmap, annotate=False)
 
 
 def get_valid_root(tree: objectify.ObjectifiedElement) -> str:
@@ -45,14 +44,12 @@ def get_valid_root(tree: objectify.ObjectifiedElement) -> str:
     for attr in ("sig", "publickey"):
         if not hasattr(root, attr):
             oem = create_element_maker()
-            print(
-                f"{Path(root.base).name}: Element '{attr}' is missing from '{root.tag}'"
-            )
+            print(f"{Path(root.base).name}: Element '{attr}' is missing from '{root.tag}'")
             root.append(oem(attr, "Missing '{attr}'", {"ver": 0}))
     return root
 
 
-@lru_cache(maxsize=None)
+@cache
 def cached_type_hints(cls) -> dict:
     return typing.get_type_hints(cls)
 
@@ -88,7 +85,7 @@ class XmlDeserialiser:
     def from_element(self, element=None, base_class=None):
         element_name = get_element_name(element)
         element_class = base_class or getattr(classes, self.cls_name(element_name))
-        kwargs: Dict[str, Any] = {}
+        kwargs: dict[str, Any] = {}
         if element_class.xs_type != "element":
             kwargs["object"] = element.text or ""
         type_hints = cached_type_hints(element_class)
@@ -126,9 +123,7 @@ class XmlDeserialiser:
         return type_hint
 
     def is_optional(self, type_hint):
-        return typing.get_origin(type_hint) is typing.Union and typing.get_args(
-            type_hint
-        )[1] is type(None)
+        return typing.get_origin(type_hint) is typing.Union and typing.get_args(type_hint)[1] is type(None)
 
     def cls_name(self, name: str) -> str:
         return name if name[0].isupper() else name.title()
