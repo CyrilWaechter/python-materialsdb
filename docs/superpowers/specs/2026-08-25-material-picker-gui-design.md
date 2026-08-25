@@ -55,8 +55,8 @@ src/materialsdb/gui/
 | `GET /` | serves index.html with injected token |
 | `GET /api/materials?type=&company=&category=&min_lambda=&max_lambda=&text=&sort=&order=` | JSON list of `summaries()` |
 | `GET /api/materials/{id}` | full detail: names (all langs), descriptions, metrics, btk U-ranges, consref/designusage |
-| `POST /api/export` `{ids[]}` | standalone multi-material .ifc download |
-| `POST /api/session/open` `{path}` / `POST /api/pick` `{ids[], replace}` / `POST /api/session/save` `{path?}` | append workflow into a chosen .ifc (one open session) |
+| `POST /api/export` `{items:[{id, layer_ids?}]}` | standalone multi-material .ifc download |
+| `POST /api/session/open` `{path}` / `POST /api/pick` `{items:[{id, layer_ids?}], replace}` / `POST /api/session/save` `{path?}` | append workflow into a chosen .ifc (one open session) |
 | `POST /api/config` `{lang, country}` | live language switch (re-query, no restart) |
 | `POST /api/refresh` | incremental cache+store update, returns Report |
 
