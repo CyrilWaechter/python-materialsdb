@@ -63,6 +63,13 @@ def test_index_serves_html_with_token(api):
     assert b"__TOKEN__" not in body
 
 
+def test_app_js_served(api):
+    server, _ = api
+    status, body = request(server, "GET", "/app.js")
+    assert status == 200
+    assert b"MATERIALSDB_TOKEN" in body
+
+
 def test_materials_list_and_filters(api):
     server, _ = api
     status, payload = request(server, "GET", "/api/materials")

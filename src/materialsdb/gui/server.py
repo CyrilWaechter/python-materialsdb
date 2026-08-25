@@ -88,12 +88,20 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         store_ = self.state.resolve_store()
         if parsed.path == "/":
-            html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+            try:
+                html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                self._send(404, {"error": "not found"})
+                return
             html = html.replace("__TOKEN__", self.state.token)
             self._send(200, content_type="text/html; charset=utf-8", raw=html.encode("utf-8"))
             return
         if parsed.path == "/app.js":
-            js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+            try:
+                js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                self._send(404, {"error": "not found"})
+                return
             self._send(200, content_type="text/javascript; charset=utf-8", raw=js.encode("utf-8"))
             return
         if parsed.path == "/api/materials":

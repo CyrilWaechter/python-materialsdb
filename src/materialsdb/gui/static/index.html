@@ -1,8 +1,47 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>materialsdb picker</title></head>
+<head>
+<meta charset="utf-8">
+<title>materialsdb picker</title>
+<style>
+ body { font-family: sans-serif; margin: 1rem; display: flex; gap: 1rem; }
+ #left { flex: 3; } #right { flex: 2; }
+ table { border-collapse: collapse; width: 100%; }
+ th, td { border: 1px solid #ccc; padding: .25rem .5rem; text-align: left; cursor: pointer; }
+ tr.selected { background: #eef; }
+ aside { position: sticky; top: 1rem; }
+ dl dt { font-weight: bold; margin-top: .4rem; }
+ label { display: block; margin-top: .5rem; }
+ input, select { margin-right: .5rem; }
+ button { margin: .5rem .25rem 0 0; }
+ #status { color: #06c; min-height: 1.2em; }
+</style>
+</head>
 <body>
-<p>materialsdb picker placeholder</p>
+<div id="left">
+ <div>
+  <input id="text" placeholder="search"><select id="type">
+   <option value="">type</option><option>simple</option><option>btk</option><option>construction</option>
+  </select>
+  <select id="sort">
+   <option value="company">company</option><option value="category">category</option>
+   <option value="lambda">lambda</option><option value="thick">thickness</option><option value="name">name</option>
+  </select>
+  <label style="display:inline">desc <input type="checkbox" id="desc"></label>
+  <button onclick="loadTable()">search</button>
+  <button id="export">export .ifc</button>
+  <button id="open">open session...</button>
+  <button id="pick">append selected</button>
+  <label style="display:inline">replace <input type="checkbox" id="replace"></label>
+  <button id="save">save session</button>
+  <button id="refresh">refresh cache</button>
+ </div>
+ <p id="status"></p>
+ <table><thead><tr><th></th><th>name</th><th>company</th><th>category</th><th>type</th><th>lambda</th><th>thick mm</th><th>usage</th></tr></thead>
+ <tbody id="rows"></tbody></table>
+</div>
+<aside id="right"><h3>detail</h3><dl id="detail"></dl></aside>
 <script>window.MATERIALSDB_TOKEN = "__TOKEN__";</script>
+<script src="/app.js"></script>
 </body>
 </html>

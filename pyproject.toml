@@ -24,6 +24,9 @@ Homepage = "https://github.com/CyrilWaechter/python-materialsdb"
 "Bug Tracker" = "https://github.com/CyrilWaechter/python-materialsdb/issues"
 Community = "https://community.osarch.org/"
 
+[project.scripts]
+materialsdb-gui = "materialsdb.gui.__main__:main"
+
 [project.optional-dependencies]
 ifc = ["ifcopenshell"]
 dev = [
@@ -40,7 +43,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.json", "*.xsd"]
+"*" = ["*.json", "*.xsd", "*.html", "*.js"]
 
 [tool.pytest.ini_options]
 testpaths = [
