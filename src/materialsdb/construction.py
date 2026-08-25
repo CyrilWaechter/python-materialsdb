@@ -106,3 +106,61 @@ def u_value(construction: Construction, store_, preset: str = "ISO6946") -> URes
 
     u = 1 / (rsi + r_sum + rse)
     return UResult(u=u, rsi=rsi, rse=rse, contributions=contributions, missing_lambda_ids=missing)
+
+
+def to_ifc_layer_set(construction: Construction, store_, file=None):
+    """Emit a wrapper IFC library containing the construction as an
+    IfcMaterialLayerSet. Referenced materials are built through
+    MaterialBuilder (single representative variant) so their identity psets
+    ride along; IfcMaterialLayer.Description carries the source material guid."""
+    import uuid
+
+    from materialsdb.ifc.material_builder import MaterialBuilder
+    from materialsdb.ifc.project_library import ProjectLibrary
+
+    missing = [layer.material_id for layer in construction.layers if store_.get(layer.material_id) is None]
+    if missing:
+        raise ValueError(f"unknown material ids: {', '.join(missing)}")
+
+    if file is None:
+        library = ProjectLibrary()
+        library.create_project_library(
+            company="MaterialsDB Constructions",
+            companyid=str(uuid.uuid4()),
+            ver=1,
+            crd=utils.new_tdatetime(),
+        )
+        target_file = library.file
+    else:
+        library = None
+        target_file = file
+
+    builder = MaterialBuilder(target_file)
+    material_layers = []
+    for layer in construction.layers:
+        summary = store_.get_summary(layer.material_id)
+        material = store_.get(layer.material_id)
+        created = builder.build(
+            material,
+            company_id=str(summary.company_id),
+            company=summary.company,
+            with_layers=False,
+        )
+        assert len(created) == 1, "with_layers=False must yield exactly one IfcMaterial"
+        name = summary.names.get(config.get_lang()) or ""
+        element_name = f"{name} | {round(layer.thickness_m * 1000)} mm"
+        ifc_layer = target_file.create_entity(
+            "IfcMaterialLayer",
+            Material=created[0],
+            LayerThickness=layer.thickness_m,
+            Description=layer.material_id,
+            Name=element_name,
+        )
+        material_layers.append(ifc_layer)
+
+    target_file.create_entity(
+        "IfcMaterialLayerSet",
+        MaterialLayers=material_layers,
+        LayerSetName=construction.name,
+    )
+    return target_file if library is None else library.file

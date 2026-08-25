@@ -67,10 +67,14 @@ class MaterialBuilder:
         self._context = None
         self._styles = {}
 
-    def build(self, material, company_id="", company="", verxml=None, layer_ids=None):
+    def build(self, material, company_id="", company="", verxml=None, layer_ids=None, with_layers=True):
         name = utils.get_material_name(material, self.lang)
         description = utils.get_material_description(material, self.lang)
         category = str(material.information.group or "")
+        if not with_layers:
+            ifc_material = self.file.createIfcMaterial(name, str(description), str(category))
+            self._create_identity_pset(ifc_material, material, company_id, company, verxml)
+            return [ifc_material]
         color = material.information.color
         surface_style = self.get_surface_style(color, category)
         styled_item = self.file.createIfcStyledItem(Styles=[surface_style])

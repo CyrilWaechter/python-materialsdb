@@ -89,3 +89,59 @@ def test_presets_carry_verified_numbers():
     assert RESISTANCE_PRESETS["ISO6946"]["roof"] == (0.10, 0.04)
     assert RESISTANCE_PRESETS["ISO6946"]["floor"] == (0.17, 0.04)
     assert RESISTANCE_PRESETS["SIA180"]["wall"] == (0.13, 0.04)
+
+
+pytest.importorskip("ifcopenshell")
+
+import ifcopenshell
+
+from materialsdb.ifc.material_builder import MaterialBuilder
+
+
+def test_build_with_layers_false_creates_material_only(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+
+    created = builder.build(mini_source.material[0], company="Mini SA", with_layers=False)
+
+    assert len(created) == 1
+    assert file.by_type("IfcMaterialLayer") == []
+    identity = [p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
+    assert len(identity) == 1
+
+
+def test_to_ifc_layer_set_roundtrip(store, tmp_path):
+    import ifcopenshell
+
+    from materialsdb.construction import to_ifc_layer_set
+
+    construction = make_construction()
+    file = to_ifc_layer_set(construction, store)
+
+    out = tmp_path / "construction.ifc"
+    file.write(str(out))
+    reopened = ifcopenshell.open(str(out))
+
+    layers = sorted(reopened.by_type("IfcMaterialLayer"), key=lambda l: l.LayerThickness)
+    assert [round(l.LayerThickness, 3) for l in layers] == [0.15, 0.2]
+    assert {l.Description for l in layers} == {
+        "00000000-0000-0000-0000-000000000002",
+        "00000000-0000-0000-0000-000000000001",
+    }
+    layer_sets = reopened.by_type("IfcMaterialLayerSet")
+    assert len(layer_sets) == 1 and layer_sets[0].LayerSetName == "Test wall"
+    # identity psets ride along on referenced materials
+    identity = [p for p in reopened.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
+    assert len(identity) == 2
+
+
+def test_to_ifc_rejects_unknown_materials(store):
+    from materialsdb.construction import to_ifc_layer_set
+
+    bad = Construction(
+        name="bad",
+        design_usage=None,
+        layers=[ConstructionLayer("ffffffff-0000-0000-0000-000000000000", thickness_m=0.1)],
+    )
+    with pytest.raises(ValueError, match="ffffffff"):
+        to_ifc_layer_set(bad, store)
