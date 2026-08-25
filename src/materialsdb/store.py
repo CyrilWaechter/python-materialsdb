@@ -62,7 +62,7 @@ class MaterialStore:
     def __init__(self, db_path: Path | None = None):
         self.db_path = Path(db_path) if db_path else cache.get_cache_folder() / "materials.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(str(self.db_path))
+        self.connection = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.connection.execute("PRAGMA journal_mode=WAL")
         self.connection.executescript(_SCHEMA)
         self._ensure_schema_version()
