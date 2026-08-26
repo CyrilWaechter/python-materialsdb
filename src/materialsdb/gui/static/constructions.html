@@ -61,10 +61,12 @@
   <h3>U-value</h3>
   <select id="preset"><option>ISO6946</option><option>SIA180</option></select>
   <div id="u-display" style="font-size:1.6rem">-</div>
-  <div id="formula-line" title="U = 1 / (Rsi + Σ d_i/λ_i + Rse). Rsi/Rse come from the selected preset. Layers without a lambda value are excluded and listed as warnings."
+  <div id="formula-line"
+       title="U [W/m²K]: thermal transmittance of the construction\nRsi [m²K/W]: interior surface resistance (from the selected preset)\ndᵢ [m]: thickness of layer i\nλᵢ [W/(m·K)]: thermal conductivity of layer i\nRse [m²K/W]: exterior surface resistance (from the selected preset)\nLayers without a lambda value are excluded and listed as warnings."
        style="font-size:.72rem;color:#555;cursor:help;margin-top:.2rem">
    U = 1/(Rsi + Σ dᵢ/λᵢ + Rse)
   </div>
+
   <div class="label" style="margin-top:.3rem">LAYERS</div>
   <dl id="contributions"></dl>
   <div id="warnings" style="color:#b60"></div>
