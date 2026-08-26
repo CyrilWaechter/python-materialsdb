@@ -124,18 +124,22 @@ function i18nLabels() {
 
 function renderLayers() {
   const tbody = $("layers");
-  tbody.innerHTML = rsBoundaryRow("exterior") + layers.map((layer, index) => {
-    const tr = document.createElement("tr");
-    tr.style.cursor = "pointer";
-    if (index === selectedRow) tr.style.background = "#eef";
-    tr.innerHTML = `<td>${index + 1}</td><td data-role="name">${esc(layer.display_name || layer.material_id)}</td>` +
+  const rows = layers.map((layer, index) => {
+    const selectedAttr = index === selectedRow ? ' style="background:#eef"' : "";
+    return `<tr data-index="${index}"${selectedAttr} style="cursor:pointer">` +
+      `<td>${index + 1}</td><td data-role="name">${esc(layer.display_name || layer.material_id)}</td>` +
       `<td>${thicknessCellHtml(layer, index)}</td>` +
-      `<td data-role="lambda">${esc(layer.lambda_value ?? "")}</td><td data-role="r">${esc(fmtR(layer))}</td><td></td>`;
-    tr.addEventListener("click", () => { selectedRow = index; renderLayers(); });
-    tbody.appendChild(tr);
-  });
-  tbody.insertAdjacentHTML("beforeend", rsBoundaryRow("interior"));
+      `<td data-role="lambda">${esc(layer.lambda_value ?? "")}</td><td data-role="r">${esc(fmtR(layer))}</td><td></td></tr>`;
+  }).join("");
+  tbody.innerHTML = rsBoundaryRow("exterior") + rows + rsBoundaryRow("interior");
   bindThicknessControls();
+  tbody.querySelectorAll("tr[data-index]").forEach((tr) => {
+    tr.addEventListener("click", (event) => {
+      if (event.target.tagName === "INPUT" || event.target.tagName === "SELECT") return;
+      selectedRow = Number(tr.dataset.index);
+      renderLayers();
+    });
+  });
 }
 
 function rsBoundaryRow(which) {
