@@ -77,6 +77,20 @@ a standalone `.ifc`, or open one of your own `.ifc` files and append the
 selected materials into it. The same HTTP API powers future BIM software
 plugins (all mutating calls require a per-launch token).
 
+# Construction maker :
+Compose thermal constructions from materialsdb materials and compute their
+U-value (ISO 6946 / SIA 180 surface resistance presets):
+
+```bash
+PYTHONPATH=src python3 -m materialsdb.gui   # then open constructions.html
+```
+
+Create a construction, add materials from the catalog, adjust layer
+thicknesses in millimetres and read the resulting U-value live. Save
+constructions as JSON in your cache directory, export them as standalone
+`.ifc` files containing an `IfcMaterialLayerSet`, or append them into an
+already-open session file.
+
 # How to install
 ## Using pip
 ```bash
