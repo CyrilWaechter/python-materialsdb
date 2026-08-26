@@ -5,6 +5,9 @@
 <title>materialsdb constructions</title>
 <style>
  body { font-family: sans-serif; margin: 1rem; }
+ .top-tabs { display:flex; gap:.5rem; margin-bottom:.75rem; border-bottom:2px solid #ccc; }
+ .top-tabs a { padding:.4rem .9rem; text-decoration:none; color:#333; border-bottom:2px solid transparent; margin-bottom:-2px; }
+ .top-tabs a.active { border-bottom-color:#06c; font-weight:bold; color:#06c; }
  table { border-collapse: collapse; margin-top: .5rem; }
  th, td { border: 1px solid #ccc; padding: .25rem .5rem; text-align: left; }
  input, select { margin-right: .5rem; }
@@ -22,6 +25,7 @@
 </style>
 </head>
 <body>
+<nav class="top-tabs"><a href="/">Materials</a><a href="/constructions.html" class="active">Constructions</a></nav>
 <div style="display:flex;gap:1rem;margin:1rem;height:calc(100vh - 2rem)">
  <div id="saved" style="width:15rem;border-right:1px solid #ccc;padding-right:.6rem;overflow:auto">
   <h3>Constructions</h3>
@@ -78,6 +82,7 @@
  </div>
 </div>
 <script>window.MATERIALSDB_TOKEN = "__TOKEN__";</script>
+<script src="/picker-core.js"></script>
 <script src="/app-constructions.js"></script>
 </body>
 </html>

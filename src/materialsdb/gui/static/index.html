@@ -5,6 +5,9 @@
 <title>materialsdb picker</title>
 <style>
  body { font-family: sans-serif; margin: 1rem; display: flex; flex-wrap: wrap; gap: 1rem; }
+ .top-tabs { display:flex; gap:.5rem; width:100%; margin-bottom:.5rem; border-bottom:2px solid #ccc; }
+ .top-tabs a { padding:.4rem .9rem; text-decoration:none; color:#333; border-bottom:2px solid transparent; margin-bottom:-2px; }
+ .top-tabs a.active { border-bottom-color:#06c; font-weight:bold; color:#06c; }
  #left { flex: 3; } #right { flex: 2; }
  table { border-collapse: collapse; width: 100%; }
  th, td { border: 1px solid #ccc; padding: .25rem .5rem; text-align: left; cursor: pointer; }
@@ -23,6 +26,7 @@
 </style>
 </head>
 <body>
+<nav class="top-tabs"><a href="/" class="active">Materials</a><a href="/constructions.html">Constructions</a></nav>
 <div id="left">
  <div>
   <a href="/constructions.html" style="margin-right:.75rem">constructions →</a>
@@ -43,6 +47,7 @@
 <aside id="right"><h3>detail <button id="preview" style="display:none;float:right">preview stack</button></h3><dl id="detail"></dl></aside>
 <div id="drawer" style="display:none;flex-basis:100%"></div>
 <script>window.MATERIALSDB_TOKEN = "__TOKEN__";</script>
+<script src="/picker-core.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

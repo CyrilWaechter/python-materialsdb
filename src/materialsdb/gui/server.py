@@ -152,6 +152,14 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 return
             self._send(200, content_type="text/javascript; charset=utf-8", raw=js.encode("utf-8"))
             return
+        if parsed.path == "/picker-core.js":
+            try:
+                js = (STATIC_DIR / "picker-core.js").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                self._send(404, {"error": "not found"})
+                return
+            self._send(200, content_type="text/javascript; charset=utf-8", raw=js.encode("utf-8"))
+            return
         if parsed.path == "/api/materials":
             params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
             rows = store_.summaries(

@@ -76,13 +76,14 @@ function bindThicknessControls() {
 }
 
 async function fetchLayerChoices(materialId) {
-  // manufacturer thicknesses (mm) from the material detail; a source layer
-  // with thick=0 means any thickness is acceptable.
   const detail = await api(`/api/materials/${encodeURIComponent(materialId)}`);
   const raw = (detail.layers || []).map((l) => l.thick).filter((t) => t !== null && t !== undefined);
   const anyThickness = raw.some((t) => Number(t) === 0);
   const choices = [...new Set(raw.filter((t) => Number(t) > 0).map(Number))].sort((a, b) => a - b);
-  return { choices_mm: choices, anyThickness };
+  // category / own color for preview coloring
+  const category = detail.category || detail.group || "Others";
+  const ownColor = detail.color ?? detail.information?.color ?? null;
+  return { choices_mm: choices, anyThickness, category, ownColor, display_name: detail.display_name || detail.names?.[""] || "" };
 }
 
 /* ---------- scaled stack preview + Rsi/Rse boundaries ---------- */
@@ -98,7 +99,10 @@ function renderPreview() {
   inner += layers.map((layer, index) => {
     const flex = total ? (layer.thickness_m / total) * 100 : 0;
     const name = layer.display_name || layer.material_id.slice(0, 8);
-    return `<div class="stackbar-seg" style="flex:${flex}" title="${esc(name)} \u2014 ${esc(fmt(layer.thickness_m * 1000, 0))} mm">` +
+    const bg = (typeof PickerCore !== "undefined"
+      ? PickerCore.categoryColorStyle(layer.category || "Others", layer.ownColor)
+      : "#eef");
+    return `<div class="stackbar-seg" style="flex:${flex};background:${bg};border-right:2px solid #fff" title="${esc(name)} \u2014 ${esc(fmt(layer.thickness_m * 1000, 0))} mm">` +
       `${esc(String(index + 1))}<br>${fmt(layer.thickness_m * 1000, 0)} mm</div>`;
   }).join("");
   drawer.innerHTML =
@@ -126,7 +130,10 @@ function renderLayers() {
   const tbody = $("layers");
   const rows = layers.map((layer, index) => {
     const selectedAttr = index === selectedRow ? ' style="background:#eef"' : "";
-    return `<tr data-index="${index}"${selectedAttr} style="cursor:pointer">` +
+    const catColor = typeof PickerCore !== "undefined"
+      ? PickerCore.categoryColorStyle(layer.category || "Others", layer.ownColor)
+      : "#fff";
+    return `<tr data-index="${index}"${selectedAttr} style="cursor:pointer;border-left:4px solid ${catColor}">` +
       `<td>${index + 1}</td><td data-role="name">${esc(layer.display_name || layer.material_id)}</td>` +
       `<td>${thicknessCellHtml(layer, index)}</td>` +
       `<td data-role="lambda">${esc(layer.lambda_value ?? "")}</td><td data-role="r">${esc(fmtR(layer))}</td><td></td></tr>`;
@@ -358,24 +365,32 @@ $("delete").onclick = async () => {
 };
 $("add-layer").onclick = () => openChooser(addLayerFromChooser);
 
-async function addLayerFromChooser(materialId) {
-  if (layers.some((l) => l.material_id === materialId)) {
-    selectedRow = layers.findIndex((l) => l.material_id === materialId);
-    setStatus("material already in construction");
+async function addLayerFromChooser(picked) {
+  const items = Array.isArray(picked) ? picked : [{ material_id: picked }];
+  let added = 0;
+  for (const it of items) {
+    const thicknessHint = it.thickness_m;
+    if (thicknessHint == null) {
+      if (layers.some((l) => l.material_id === it.material_id)) {
+        // whole-material already present — skip duplicate
+        continue;
+      }
+    } else {
+      if (layers.some((l) => l.material_id === it.material_id && Math.abs(l.thickness_m - thicknessHint) < 1e-9)) continue;
+    }
+    const layer = { material_id: it.material_id, thickness_m: thicknessHint != null ? thicknessHint : 0.2 };
+    layers.push(layer);
+    selectedRow = layers.length - 1;
+    added++;
     renderLayers();
-    return;
+    await attachLayerChoices(layer);
+    if (thicknessHint == null && !layer.anyThickness && layer.choices_mm && layer.choices_mm.length) {
+      layer.thickness_m = layer.choices_mm[0] / 1000;
+    }
+    renderLayers();
   }
-  const layer = { material_id: materialId, thickness_m: 0.2 };
-  layers.push(layer);
-  selectedRow = layers.length - 1;
-  renderLayers();
-  await attachLayerChoices(layer);
-  // start from the smallest manufacturer-offered thickness when known
-  if (!layer.anyThickness && layer.choices_mm && layer.choices_mm.length) {
-    layer.thickness_m = layer.choices_mm[0] / 1000;
-  }
-  renderLayers();
-  await refreshU();
+  if (added) await refreshU();
+  else if (items.length) setStatus("selected materials already in construction");
 }
 document.querySelector("[data-move=up]").onclick = () => {
   if (selectedRow > 0) { [layers[selectedRow - 1], layers[selectedRow]] = [layers[selectedRow], layers[selectedRow - 1]]; selectedRow -= 1; renderLayers(); refreshU(); }
@@ -416,36 +431,96 @@ $("append-session").onclick = async () => {
 };
 loadList().then(() => { renderLayers(); renderContributions(); renderPreview(); });
 
-/* --- chooser modal (calls onPick with chosen material guid) --- */
+/* --- chooser modal: multi-select materials or specific layers --- */
 function openChooser(onPick) {
   const overlay = document.createElement("div");
   overlay.id = "chooser";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center";
-  overlay.innerHTML = `<div style="background:#fff;padding:.75rem;width:26rem;max-height:80vh;display:flex;flex-direction:column">` +
+  overlay.innerHTML = `<div style="background:#fff;padding:.75rem;width:30rem;max-height:80vh;display:flex;flex-direction:column">` +
     `<input id="chooser-search" placeholder="live search…" style="margin-bottom:.4rem">` +
     `<div id="chooser-results" style="overflow:auto;flex:1"></div>` +
-    `<button id="chooser-close">close</button></div>`;
+    `<div style="display:flex;gap:.5rem;margin-top:.5rem"><button id="chooser-add">Add selected</button><button id="chooser-close">close</button></div></div>`;
   document.body.appendChild(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("#chooser-close").onclick = close;
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
 
+  const selected = new Map(); // key -> {material_id, thickness_m?}
+  const expanded = new Set();
+  const detailCacheChooser = new Map();
+
+  async function getDetailCached(id) {
+    if (!detailCacheChooser.has(id)) detailCacheChooser.set(id, api(`/api/materials/${encodeURIComponent(id)}`));
+    return detailCacheChooser.get(id);
+  }
+
   let debounceTimer;
   const runSearch = async () => {
     const needle = overlay.querySelector("#chooser-search").value.trim();
     const { materials } = await api(`/api/materials${needle ? `?text=${encodeURIComponent(needle)}` : ""}`);
-    materials.splice(60);
+    materials.splice(80);
     const box = overlay.querySelector("#chooser-results");
-    box.innerHTML = materials.map((m) =>
-      `<div class="chooser-row" data-id="${esc(m.id)}" style="cursor:pointer;padding:.15rem;border-bottom:1px solid #eee">` +
-      `<b>${esc(m.display_name)}</b> · ${esc(m.company)} · ${esc(m.type)}` +
-      `${m.lambda_min !== null ? ` · λ ${esc(m.lambda_min)}` : ""}</div>`).join("") ||
-      `<i style="color:#888">no match</i>`;
-    box.querySelectorAll(".chooser-row").forEach((row) => row.addEventListener("click", () => {
-      close();
-      onPick(row.dataset.id);
-    }));
+    box.innerHTML = materials.map((m) => {
+      const hasLayers = m.type === "simple";
+      return `<div class="chooser-row" data-id="${esc(m.id)}" style="padding:.25rem;border-bottom:1px solid #eee">` +
+        `<label style="display:flex;align-items:center;gap:.4rem">` +
+        `<input type="checkbox" data-material="${esc(m.id)}">` +
+        `<span><b>${esc(m.display_name)}</b> · ${esc(m.company)} · ${esc(m.type)}${m.lambda_min !== null ? ` · λ ${esc(m.lambda_min)}` : ""}</span>` +
+        (hasLayers ? ` <span class="chooser-expander" data-id="${esc(m.id)}" style="cursor:pointer;margin-left:auto">\u25b8 layers</span>` : "") +
+        `</label>` +
+        `<div class="chooser-layers" data-parent="${esc(m.id)}" style="display:none;margin-left:1.2rem"></div></div>`;
+    }).join("") || `<i style="color:#888">no match</i>`;
+
+    box.querySelectorAll("input[data-material]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const id = cb.dataset.material;
+        if (cb.checked) selected.set(id + "|", { material_id: id });
+        else selected.delete(id + "|");
+        updateAddButton();
+      });
+    });
+    box.querySelectorAll(".chooser-expander").forEach((exp) => {
+      exp.addEventListener("click", async () => {
+        const id = exp.dataset.id;
+        const sub = box.querySelector(`.chooser-layers[data-parent="${CSS.escape(id)}"]`);
+        if (sub.style.display !== "none") { sub.style.display = "none"; exp.textContent = "\u25b8 layers"; return; }
+        exp.textContent = "\u25be layers";
+        sub.style.display = "block";
+        if (sub.dataset.loaded) return;
+        sub.dataset.loaded = "1";
+        const detail = await getDetailCached(id);
+        const layers = detail.layers || [];
+        if (!layers.length) { sub.innerHTML = `<i style="color:#888">no manufacturer thicknesses</i>`; return; }
+        sub.innerHTML = layers.map((l) =>
+          `<label style="display:block"><input type="checkbox" data-material="${esc(id)}" data-thick="${l.thick}"> ${esc(String(l.thick))} mm</label>`).join("");
+        sub.querySelectorAll("input[data-thick]").forEach((lcb) => {
+          lcb.addEventListener("change", () => {
+            const key = id + "|" + lcb.dataset.thick;
+            if (lcb.checked) selected.set(key, { material_id: id, thickness_m: Number(lcb.dataset.thick) / 1000 });
+            else selected.delete(key);
+            // uncheck parent whole-material if specific layer checked
+            const parentCb = box.querySelector(`input[data-material="${CSS.escape(id)}"]:not([data-thick])`);
+            if (parentCb) parentCb.checked = false;
+            if (lcb.checked) selected.delete(id + "|");
+            updateAddButton();
+          });
+        });
+      });
+    });
   };
+
+  function updateAddButton() {
+    const btn = overlay.querySelector("#chooser-add");
+    btn.textContent = `Add selected (${selected.size})`;
+    btn.disabled = selected.size === 0;
+  }
+
+  overlay.querySelector("#chooser-add").onclick = () => {
+    if (!selected.size) return;
+    close();
+    onPick([...selected.values()]);
+  };
+
   overlay.querySelector("#chooser-search").addEventListener("input", () => {
     clearTimeout(debounceTimer); debounceTimer = setTimeout(runSearch, 250);
   });
