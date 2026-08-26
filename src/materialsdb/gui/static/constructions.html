@@ -12,14 +12,25 @@
  dl dt { font-weight: bold; margin-top: .4rem; }
  dl dd { margin: 0 0 .3rem 0; }
  #status { color: #06c; min-height: 1.2em; }
+ .stackbar { display: flex; height: 46px; border: 1px solid #999; margin: .3rem 0; }
+ .stackbar-seg { display: flex; align-items: center; justify-content: center;
+                 font-size: .72rem; text-align: center; border-right: 1px solid #fff; overflow: hidden; }
+ .rs-chip { font-size: .75rem; background: #eef; padding: .1rem .5rem; border-radius: 4px; }
+ tr.rsrow td { background: #f4f4f8; font-style: italic; }
+ .warn { color: #b60; font-weight: bold; cursor: help; }
+ .label { font-size: .7rem; text-transform: uppercase; color: #666; margin-top: .4rem; }
 </style>
 </head>
 <body>
 <div style="display:flex;gap:1rem;margin:1rem;height:calc(100vh - 2rem)">
- <div id="saved" style="width:14rem;border-right:1px solid #ccc;padding-right:.6rem">
+ <div id="saved" style="width:15rem;border-right:1px solid #ccc;padding-right:.6rem;overflow:auto">
   <h3>Constructions</h3>
   <ul id="saved-list" style="list-style:none;padding:0"></ul>
   <button id="new">new</button><button id="delete">delete</button>
+  <hr>
+  <div class="label">materialsdb (read-only)</div>
+  <ul id="mdb-list" style="list-style:none;padding:0;font-size:.85rem"></ul>
+  <div id="legacy-view" style="font-size:.85rem;border-top:1px solid #ddd;margin-top:.5rem;padding-top:.4rem"></div>
   <hr><a href="/">picker</a>
  </div>
  <div id="editor" style="flex:2;display:flex;flex-direction:column">
@@ -33,7 +44,8 @@
    </select>
    <button id="add-layer">add layer</button>
   </div>
-  <table style="margin-top:.5rem"><thead><tr>
+  <div id="preview" style="margin-top:.5rem"></div>
+  <table><thead><tr>
     <th>#</th><th>material</th><th>thickness mm</th><th>lambda</th><th>r m2K/W</th><th></th>
   </tr></thead><tbody id="layers"></tbody></table>
   <div style="margin-top:.4rem">
@@ -45,6 +57,11 @@
   <h3>U-value</h3>
   <select id="preset"><option>ISO6946</option><option>SIA180</option></select>
   <div id="u-display" style="font-size:1.6rem">-</div>
+  <button id="formula-toggle" style="font-size:.75rem">ℹ how U is computed</button>
+  <div id="formula-box" style="display:none;font-size:.78rem;background:#f6f6fa;padding:.35rem;margin-top:.3rem">
+    U = 1 / (Rsi + Σ d<sub>i</sub>/λ<sub>i</sub> + Rse)<br>
+    Layers without a lambda value are excluded and listed as warnings.
+  </div>
   <div class="label" style="margin-top:.3rem">LAYERS</div>
   <dl id="contributions"></dl>
   <div id="warnings" style="color:#b60"></div>
