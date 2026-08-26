@@ -109,3 +109,26 @@ registry behaviour incl. designUsage selection; missing-lambda flagging;
 to_ifc roundtrip (reopen: layer count, order, thicknesses, identity psets);
 CRUD endpoints incl. slug safety and validation failures; frontend manual
 checklist (JS untested by automation, consistent with project practice).
+
+## UX feedback round (2026-08-25, post-first-implementation)
+
+Adopted after maintainer testing:
+
+1. Thickness input: free numeric field (no spinners). When the referenced
+   material exposes multiple manufacturer thicknesses, a dropdown lists them;
+   custom values are allowed with an inline "manufacturer does not offer this
+   thickness" warning. Source layers with thick=0 mean any thickness allowed.
+2. Scaled stack preview rendered permanently in the composer (bars
+   proportional to thickness, exterior left, live updates).
+3. Rsi/Rse shown as boundary rows/labels at interior and exterior ends,
+   localized, values from the active preset.
+4. Static formula info toggle: U = 1 / (Rsi + SUM(d_i/lambda_i) + Rse),
+   noting lambda-missing layers are excluded.
+5. Left panel gains a materialsdb group listing construction-typed materials
+   (read-only): consref/designusage, best-effort decoded stack of the NON-SPEC
+   vendor string (thickness@guid), variant selector, computed U. An explicit
+   "create editable copy" action loads decoded layers into the composer.
+   Decoder lives in construction.py as parse_legacy_stack, documented as
+   handling vendor-specific non-spec content; unknown tokens preserved
+   verbatim, unresolvable guids flagged per layer, never fatal.
+6. Process: maintainer tests each round before any merge request.
