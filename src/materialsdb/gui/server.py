@@ -205,6 +205,11 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
 
             self._send(200, {"constructions": cm.list_constructions()})
             return
+        if parsed.path == "/api/config":
+            from materialsdb import config as cfg
+
+            self._send(200, {"lang": cfg.get_lang(), "country": cfg.get_country()})
+            return
         if parsed.path.startswith("/api/constructions/"):
             from materialsdb import construction as cm
 

@@ -219,6 +219,16 @@ async function attachLayerChoices(layer) {
 
 /* ---------- saved + materialsdb lists ---------- */
 
+async function initConfig() {
+  try {
+    const cfg = await api("/api/config");
+    const langEl = document.getElementById("lang");
+    const countryEl = document.getElementById("country");
+    if (langEl && cfg.lang) { langEl.value = cfg.lang; document.documentElement.lang = cfg.lang; }
+    if (countryEl && cfg.country) countryEl.value = cfg.country;
+  } catch {}
+}
+
 async function loadList() {
   const { constructions } = await api("/api/constructions");
   $("saved-list").innerHTML = constructions.map((name) =>
@@ -442,107 +452,43 @@ $("append-session").onclick = async () => {
     });
   setStatus(`appended layer set (${result.layer_count} layers)`);
 };
-loadList().then(() => { renderLayers(); renderContributions(); renderPreview(); });
+initConfig().then(() => loadList().then(() => { renderLayers(); renderContributions(); renderPreview(); }));
+document.getElementById("lang")?.addEventListener("change", async () => {
+  await api("/api/config", { method: "POST", body: JSON.stringify({ lang: $("lang").value }) });
+  document.documentElement.lang = $("lang").value;
+});
+document.getElementById("country")?.addEventListener("change", async () => {
+  await api("/api/config", { method: "POST", body: JSON.stringify({ country: $("country").value }) });
+});
 
-/* --- chooser modal: multi-select materials or specific layers --- */
+/* --- chooser: embedded full picker via iframe --- */
 function openChooser(onPick) {
   const overlay = document.createElement("div");
   overlay.id = "chooser";
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center";
-  overlay.innerHTML = `<div style="background:#fff;padding:.75rem;width:30rem;max-height:80vh;display:flex;flex-direction:column">` +
-    `<div style="display:flex;gap:.4rem;margin-bottom:.4rem"><input id="chooser-search" placeholder="live search…" style="flex:1">` +
-    `<select id="chooser-type"><option value="">all types</option><option>simple</option><option>btk</option><option>construction</option></select></div>` +
-    `<div id="chooser-results" style="overflow:auto;flex:1"></div>` +
-    `<div style="display:flex;gap:.5rem;margin-top:.5rem"><button id="chooser-add">Add selected</button><button id="chooser-close">close</button></div></div>`;
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:1000";
+  overlay.innerHTML = `<div style="background:#fff;width:85%;height:85%;display:flex;flex-direction:column;border-radius:6px;overflow:hidden">` +
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:.4rem .6rem;border-bottom:1px solid #ccc"><b>Select materials</b>` +
+    `<div><button id="chooser-add" disabled>Add selected (0)</button><button id="chooser-close" style="margin-left:.4rem">close</button></div></div>` +
+    `<iframe src="/?embed=1" style="flex:1;border:none;width:100%"></iframe></div>`;
   document.body.appendChild(overlay);
-  const close = () => overlay.remove();
+  const close = () => { window.removeEventListener("message", onMessage); overlay.remove(); };
   overlay.querySelector("#chooser-close").onclick = close;
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
 
-  const selected = new Map(); // key -> {material_id, thickness_m?}
-  const expanded = new Set();
-  const detailCacheChooser = new Map();
-
-  async function getDetailCached(id) {
-    if (!detailCacheChooser.has(id)) detailCacheChooser.set(id, api(`/api/materials/${encodeURIComponent(id)}`));
-    return detailCacheChooser.get(id);
+  let pending = [];
+  function onMessage(event) {
+    if (event.data && event.data.type === "picker-selection") {
+      pending = event.data.items || [];
+      const btn = overlay.querySelector("#chooser-add");
+      btn.textContent = `Add selected (${pending.length})`;
+      btn.disabled = pending.length === 0;
+    }
   }
-
-  let debounceTimer;
-  const runSearch = async () => {
-    const needle = overlay.querySelector("#chooser-search").value.trim();
-    const typeVal = overlay.querySelector("#chooser-type").value;
-    const params = new URLSearchParams();
-    if (needle) params.set("text", needle);
-    if (typeVal) params.set("type", typeVal);
-    const qs = params.toString() ? `?${params}` : "";
-    const { materials } = await api(`/api/materials${qs}`);
-    materials.splice(80);
-    const box = overlay.querySelector("#chooser-results");
-    box.innerHTML = materials.map((m) => {
-      const hasLayers = m.type === "simple";
-      return `<div class="chooser-row" data-id="${esc(m.id)}" style="padding:.25rem;border-bottom:1px solid #eee">` +
-        `<label style="display:flex;align-items:center;gap:.4rem">` +
-        `<input type="checkbox" data-material="${esc(m.id)}">` +
-        `<span><b>${esc(m.display_name)}</b> · ${esc(m.company)} · ${esc(m.type)}${m.lambda_min !== null ? ` · λ ${esc(m.lambda_min)}` : ""}</span>` +
-        (hasLayers ? ` <span class="chooser-expander" data-id="${esc(m.id)}" style="cursor:pointer;margin-left:auto">\u25b8 layers</span>` : "") +
-        `</label>` +
-        `<div class="chooser-layers" data-parent="${esc(m.id)}" style="display:none;margin-left:1.2rem"></div></div>`;
-    }).join("") || `<i style="color:#888">no match</i>`;
-
-    box.querySelectorAll("input[data-material]").forEach((cb) => {
-      cb.addEventListener("change", () => {
-        const id = cb.dataset.material;
-        if (cb.checked) selected.set(id + "|", { material_id: id });
-        else selected.delete(id + "|");
-        updateAddButton();
-      });
-    });
-    box.querySelectorAll(".chooser-expander").forEach((exp) => {
-      exp.addEventListener("click", async () => {
-        const id = exp.dataset.id;
-        const sub = box.querySelector(`.chooser-layers[data-parent="${CSS.escape(id)}"]`);
-        if (sub.style.display !== "none") { sub.style.display = "none"; exp.textContent = "\u25b8 layers"; return; }
-        exp.textContent = "\u25be layers";
-        sub.style.display = "block";
-        if (sub.dataset.loaded) return;
-        sub.dataset.loaded = "1";
-        const detail = await getDetailCached(id);
-        const layers = detail.layers || [];
-        if (!layers.length) { sub.innerHTML = `<i style="color:#888">no manufacturer thicknesses</i>`; return; }
-        sub.innerHTML = layers.map((l) =>
-          `<label style="display:block"><input type="checkbox" data-material="${esc(id)}" data-thick="${l.thick}"> ${esc(String(l.thick))} mm</label>`).join("");
-        sub.querySelectorAll("input[data-thick]").forEach((lcb) => {
-          lcb.addEventListener("change", () => {
-            const key = id + "|" + lcb.dataset.thick;
-            if (lcb.checked) selected.set(key, { material_id: id, thickness_m: Number(lcb.dataset.thick) / 1000 });
-            else selected.delete(key);
-            // uncheck parent whole-material if specific layer checked
-            const parentCb = box.querySelector(`input[data-material="${CSS.escape(id)}"]:not([data-thick])`);
-            if (parentCb) parentCb.checked = false;
-            if (lcb.checked) selected.delete(id + "|");
-            updateAddButton();
-          });
-        });
-      });
-    });
-  };
-
-  function updateAddButton() {
-    const btn = overlay.querySelector("#chooser-add");
-    btn.textContent = `Add selected (${selected.size})`;
-    btn.disabled = selected.size === 0;
-  }
-
+  window.addEventListener("message", onMessage);
   overlay.querySelector("#chooser-add").onclick = () => {
-    if (!selected.size) return;
+    if (!pending.length) return;
+    const copy = [...pending];
     close();
-    onPick([...selected.values()]);
+    onPick(copy);
   };
-
-  overlay.querySelector("#chooser-search").addEventListener("input", () => {
-    clearTimeout(debounceTimer); debounceTimer = setTimeout(runSearch, 250);
-  });
-  overlay.querySelector("#chooser-type").addEventListener("change", runSearch);
-  runSearch();
 }

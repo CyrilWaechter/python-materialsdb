@@ -10,8 +10,16 @@ const USAGE_LABELS = {
   de: { wall: "Wand", roof: "Dach", floor: "Boden", door: "T\u00fcr" },
 };
 
+const isEmbed = new URLSearchParams(location.search).has("embed");
 let allMaterials = [];
 let lang = "en";
+if (isEmbed) {
+  document.addEventListener("DOMContentLoaded", () => {
+    document.querySelector(".top-tabs")?.remove();
+    const sp = document.getElementById("settings-panel");
+    if (sp) sp.remove();
+  });
+}
 let sortKey = "company";
 let sortAsc = true;
 const facetSelections = { company: new Set(), category: new Set(), type: new Set(), usage: new Set() };
@@ -19,6 +27,34 @@ const detailCache = new Map();
 const expanded = new Set();
 const layerSelections = new Map();   // materialId -> Set(sourceLayerGuid); absent = whole material
 let lastSelectedId = null;
+if (isEmbed) {
+  const _buildItems = () => {
+    const items = [];
+    for (const id of selected) {
+      const layerSet = layerSelections.get(id);
+      if (layerSet && layerSet.size) {
+        for (const lguid of layerSet) {
+          const det = detailCache.get(id);
+          const layerDetail = det?.layers?.find((l) => l.id === lguid);
+          const thick = layerDetail ? Number(layerDetail.thick) : 0;
+          items.push({ material_id: id, thickness_m: thick ? thick / 1000 : 0.2 });
+        }
+      } else {
+        items.push({ material_id: id });
+      }
+    }
+    return items;
+  };
+  const _notifyParent = () => {
+    try { parent.postMessage({ type: "picker-selection", items: _buildItems() }, "*"); } catch {}
+  };
+  const _origAdd = selected.add.bind(selected); selected.add = (v) => { const r = _origAdd(v); _notifyParent(); return r; };
+  const _origDelete = selected.delete.bind(selected); selected.delete = (v) => { const r = _origDelete(v); _notifyParent(); return r; };
+  const _origClear = selected.clear.bind(selected); selected.clear = () => { const r = _origClear(); _notifyParent(); return r; };
+  const _origLSet = layerSelections.set.bind(layerSelections); layerSelections.set = (k, v) => { const r = _origLSet(k, v); _notifyParent(); return r; };
+  const _origLDel = layerSelections.delete.bind(layerSelections); layerSelections.delete = (k) => { const r = _origLDel(k); _notifyParent(); return r; };
+  const _origLClear = layerSelections.clear.bind(layerSelections); layerSelections.clear = () => { const r = _origLClear(); _notifyParent(); return r; };
+}
 const COLUMNS = [
   { key: "display_name", label: "name" },
   { key: "company", label: "company", facet: true },
@@ -60,6 +96,15 @@ async function getDetail(id) {
 }
 
 async function loadMaterials() {
+  try {
+    const cfg = await api("/api/config");
+    lang = cfg.lang || lang;
+    const langEl = document.getElementById("lang");
+    if (langEl) langEl.value = lang;
+    const countryEl = document.getElementById("country");
+    if (countryEl && cfg.country) countryEl.value = cfg.country;
+    document.documentElement.lang = lang;
+  } catch {}
   const params = new URLSearchParams();
   params.set("lang", lang);
   const { materials } = await api(`/api/materials?${params}`);
