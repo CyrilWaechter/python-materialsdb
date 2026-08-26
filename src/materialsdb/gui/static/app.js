@@ -375,4 +375,10 @@ $("preview").onclick = async () => {
   openDrawer(await getDetail(lastSelectedId));
 };
 
+document.getElementById("settings-tab").addEventListener("click", (e) => {
+  e.preventDefault();
+  const p = document.getElementById("settings-panel");
+  p.style.display = p.style.display === "none" ? "block" : "none";
+});
+
 loadMaterials();

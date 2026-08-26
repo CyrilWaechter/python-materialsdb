@@ -197,8 +197,10 @@ async function refreshU() {
   try {
     lastResult = await api("/api/u_value", { method: "POST", body: JSON.stringify(body) });
     lastResult.contributions.forEach((c) => {
-      const row = layers.find((l) => l.material_id === c.material_id);
-      if (row) { row.display_name = c.name || row.display_name; row.lambda_value = c.lambda_value; }
+      layers.filter((l) => l.material_id === c.material_id).forEach((row) => {
+        row.display_name = c.name || row.display_name;
+        row.lambda_value = c.lambda_value;
+      });
     });
   } catch (err) { setStatus(err.message); }
   renderLayers();
@@ -401,6 +403,17 @@ document.querySelector("[data-move=down]").onclick = () => {
 document.querySelector("[data-action=remove]").onclick = () => {
   if (selectedRow > -1) { layers.splice(selectedRow, 1); selectedRow = -1; renderLayers(); refreshU(); }
 };
+$("reverse").onclick = () => {
+  if (!layers.length) return;
+  layers.reverse();
+  if (selectedRow !== -1) selectedRow = layers.length - 1 - selectedRow;
+  renderLayers(); refreshU();
+};
+document.getElementById("settings-tab").addEventListener("click", (e) => {
+  e.preventDefault();
+  const p = document.getElementById("settings-panel");
+  p.style.display = p.style.display === "none" ? "block" : "none";
+});
 $("preset").onchange = () => { refreshU(); };
 $("design-usage").onchange = refreshU;
 $("save").onclick = async () => {
@@ -437,7 +450,8 @@ function openChooser(onPick) {
   overlay.id = "chooser";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center";
   overlay.innerHTML = `<div style="background:#fff;padding:.75rem;width:30rem;max-height:80vh;display:flex;flex-direction:column">` +
-    `<input id="chooser-search" placeholder="live search…" style="margin-bottom:.4rem">` +
+    `<div style="display:flex;gap:.4rem;margin-bottom:.4rem"><input id="chooser-search" placeholder="live search…" style="flex:1">` +
+    `<select id="chooser-type"><option value="">all types</option><option>simple</option><option>btk</option><option>construction</option></select></div>` +
     `<div id="chooser-results" style="overflow:auto;flex:1"></div>` +
     `<div style="display:flex;gap:.5rem;margin-top:.5rem"><button id="chooser-add">Add selected</button><button id="chooser-close">close</button></div></div>`;
   document.body.appendChild(overlay);
@@ -457,7 +471,12 @@ function openChooser(onPick) {
   let debounceTimer;
   const runSearch = async () => {
     const needle = overlay.querySelector("#chooser-search").value.trim();
-    const { materials } = await api(`/api/materials${needle ? `?text=${encodeURIComponent(needle)}` : ""}`);
+    const typeVal = overlay.querySelector("#chooser-type").value;
+    const params = new URLSearchParams();
+    if (needle) params.set("text", needle);
+    if (typeVal) params.set("type", typeVal);
+    const qs = params.toString() ? `?${params}` : "";
+    const { materials } = await api(`/api/materials${qs}`);
     materials.splice(80);
     const box = overlay.querySelector("#chooser-results");
     box.innerHTML = materials.map((m) => {
@@ -524,5 +543,6 @@ function openChooser(onPick) {
   overlay.querySelector("#chooser-search").addEventListener("input", () => {
     clearTimeout(debounceTimer); debounceTimer = setTimeout(runSearch, 250);
   });
+  overlay.querySelector("#chooser-type").addEventListener("change", runSearch);
   runSearch();
 }

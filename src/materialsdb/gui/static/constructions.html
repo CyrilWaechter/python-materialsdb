@@ -25,7 +25,11 @@
 </style>
 </head>
 <body>
-<nav class="top-tabs"><a href="/">Materials</a><a href="/constructions.html" class="active">Constructions</a></nav>
+<nav class="top-tabs"><a href="/">Materials</a><a href="/constructions.html" class="active">Constructions</a><a href="#" id="settings-tab">Settings</a></nav>
+<div id="settings-panel" style="display:none;padding:.5rem;border:1px solid #ccc;margin-bottom:.5rem">
+  <label>Language <select id="lang"><option value="en">en</option><option value="fr">fr</option><option value="de">de</option></select></label>
+  <label>Country <select id="country"><option value="CH">CH</option><option value="FR">FR</option></select></label>
+</div>
 <div style="display:flex;gap:1rem;margin:1rem;height:calc(100vh - 2rem)">
  <div id="saved" style="width:15rem;border-right:1px solid #ccc;padding-right:.6rem;overflow:auto">
   <h3>Constructions</h3>
@@ -36,31 +40,31 @@
   <input id="mdb-search" placeholder="search…" style="width:95%">
   <select id="mdb-company" style="width:95%;margin-top:.25rem"><option value="">all companies</option></select>
   <ul id="mdb-list" style="list-style:none;padding:0;font-size:.85rem"></ul>
-  <hr><a href="/">picker</a>
- </div>
- <div id="editor" style="flex:2;display:flex;flex-direction:column">
-  <div id="readonly-ui" style="display:none"></div>
-  <div id="composer-ui" style="display:flex;flex-direction:column;flex:1">
-  <div>
-   <input id="name" placeholder="construction name">
-   <select id="design-usage">
-    <option value="">generic</option>
-    <option value="consDesignForWall">wall</option>
-    <option value="consDesignForRoof">roof</option>
-    <option value="consDesignForFloor">floor</option>
-   </select>
-   <button id="add-layer">add layer</button>
   </div>
-  <div id="preview" style="margin-top:.5rem"></div>
-  <table><thead><tr>
-    <th>#</th><th>material</th><th>thickness mm</th><th>lambda</th><th>r m2K/W</th><th></th>
-  </tr></thead><tbody id="layers"></tbody></table>
+  <div id="editor" style="flex:2;display:flex;flex-direction:column">
+   <div id="readonly-ui" style="display:none"></div>
+   <div id="composer-ui" style="display:flex;flex-direction:column;flex:1">
+   <div>
+    <input id="name" placeholder="construction name">
+    <select id="design-usage">
+     <option value="">generic</option>
+     <option value="consDesignForWall">wall</option>
+     <option value="consDesignForRoof">roof</option>
+     <option value="consDesignForFloor">floor</option>
+    </select>
+    <button id="add-layer">add layer</button>
+   </div>
+   <div id="preview" style="margin-top:.5rem"></div>
+   <table><thead><tr>
+     <th>#</th><th>material</th><th>thickness mm</th><th>lambda</th><th>r m2K/W</th><th></th>
+   </tr></thead><tbody id="layers"></tbody></table>
+   <div style="margin-top:.35rem">
+    <button data-move="up">↑ up</button><button data-move="down">↓ down</button>
+    <button id="reverse">↕ reverse</button>
+    <button data-action="remove">remove selected</button>
+   </div>
+   </div>
   </div>
-  <div style="margin-top:.4rem">
-   <button data-move="up">up</button><button data-move="down">down</button>
-   <button data-action="remove">remove selected</button>
-  </div>
- </div>
  <div id="ucard" style="width:16rem;border-left:1px solid #ccc;padding-left:.6rem">
   <h3>U-value</h3>
   <select id="preset"><option>ISO6946</option><option>SIA180</option></select>
