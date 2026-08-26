@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<materials company="Other SA" companyid="B2C95A67-5B1E-4960-A297-2DE8275049C6" ver="2" crd="44000.5" verXML="3" xmlns="http://www.materialsdb.org">
+  <material id="00000000-0000-0000-0000-000000000001" readonly="1" type="simple">
+    <information group="Masonry">
+      <names>
+        <name lang="fr">Briques X</name>
+      </names>
+    </information>
+    <layers>
+      <layer id="00000000-0000-0000-0000-0000000000c1">
+        <geometry thick="180"/>
+        <thermal lambda_value="0.75"/>
+      </layer>
+    </layers>
+  </material>
+  <material id="00000000-0000-0000-0000-000000000006" readonly="1" type="simple">
+    <information group="Stone">
+      <names>
+        <name lang="fr">Pierre D</name>
+      </names>
+    </information>
+  </material>
+</materials>

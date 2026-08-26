@@ -42,6 +42,7 @@ ty check --project .                                                            
 
 - Package data ships only `*.json` and `*.xsd` (`[tool.setuptools.package-data]` in pyproject.toml); new bundled files must match or extend that list.
 - Active schema target is `schema/materialsdb103.xsd` (`serialiser.get_xml_schema()`); the 102 xsd/dtd are still shipped.
+- `store.py` schema v3: `producer_files` stores per-file `ver`/`crd` from the root `<materials>` element; `Report.duplicates` carries cross-producer material-ID collisions.
 - `cache.py` downloads producer/index XML from materialsdb.org into `~/.cache/materialsdb` (honors `XDG_CACHE_HOME`/`APPDATA`) — cache-refresh paths require network access.
 - Materials data is localized: language/country come from `config.set_lang()/set_country()` (ISO 639-1 / ISO 3166-1 alpha-2 codes).
 - Root `.env` documents an alternative dev setup via `PYTHONPATH` pointing at `src/` plus a local IfcOpenShell checkout instead of pip install.

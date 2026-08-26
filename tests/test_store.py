@@ -147,11 +147,49 @@ def test_duplicate_ids_skip_row_not_file(tmp_path, mini_xml):
         report = s.refresh(paths=[dup])
 
         assert len(report.updated) == 1  # file processed, not skipped
+        assert len(report.duplicates) == 1  # intra-file dup still recorded
+        assert report.duplicates[0].kept_source == report.duplicates[0].skipped_source
         rows = s.summaries(sort="id")
         assert len(rows) == 1  # first occurrence wins
         assert rows[0].names["fr"] == "Premier F"
         # healthy files coexist
         s.refresh(paths=[mini_xml, dup])
         assert {r.id[-3:] for r in s.summaries()} == {"001", "002", "003", "aa1"}
+    finally:
+        s.close()
+
+
+def test_cross_producer_duplicate_reported(tmp_path, mini_xml):
+    from pathlib import Path
+
+    cross_dup = Path(__file__).parent / "fixtures" / "cross_producer_dup.xml"
+    s = MaterialStore(db_path=tmp_path / "cross.db")
+    try:
+        report = s.refresh(paths=[mini_xml, cross_dup])
+        assert len(report.updated) == 2
+        assert len(report.duplicates) == 1
+        dup = report.duplicates[0]
+        assert dup.material_id == "00000000-0000-0000-0000-000000000001"
+        assert "mini" in dup.kept_source
+        assert "cross" in dup.skipped_source
+        # first-processed wins
+        rows = {r.id[-3:]: r for r in s.summaries(sort="id")}
+        assert rows["001"].company == "Mini SA"
+        assert rows["001"].names["fr"] == "Isolant A"
+        # non-duplicate material from second file is present
+        assert "006" in rows
+        assert rows["006"].company == "Other SA"
+    finally:
+        s.close()
+
+
+def test_producer_files_stores_ver_crd(tmp_path, mini_xml):
+    s = MaterialStore(db_path=tmp_path / "vercrd.db")
+    try:
+        s.refresh(paths=[mini_xml])
+        row = s.connection.execute("SELECT ver, crd FROM producer_files").fetchone()
+        assert row is not None
+        assert row[0] == 1  # ver from mini_producer.xml
+        assert isinstance(row[1], float)
     finally:
         s.close()

@@ -461,6 +461,10 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 "updated": [str(p) for p in report.updated],
                 "deleted": [str(p) for p in report.deleted],
                 "skipped": [str(p) for p in report.skipped],
+                "duplicates": [
+                    {"material_id": d.material_id, "kept": d.kept_source, "skipped": d.skipped_source}
+                    for d in report.duplicates
+                ],
             },
         )
 

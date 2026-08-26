@@ -12,9 +12,10 @@ from materialsdb.classes import Material
 from materialsdb.serialiser import XmlDeserialiser, get_valid_root
 from materialsdb.summary import MaterialSummary, summarize_material
 
-Report = namedtuple("Report", ["existing", "updated", "deleted", "skipped"])
+DuplicateInfo = namedtuple("DuplicateInfo", ["material_id", "kept_source", "skipped_source"])
+Report = namedtuple("Report", ["existing", "updated", "deleted", "skipped", "duplicates"])
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS materials (
@@ -26,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_company ON materials(company);
 CREATE INDEX IF NOT EXISTS idx_category ON materials(category);
 CREATE INDEX IF NOT EXISTS idx_lambda ON materials(lambda_min);
 CREATE TABLE IF NOT EXISTS producer_files (
-    path TEXT PRIMARY KEY, sha256 TEXT, built_at REAL);
+    path TEXT PRIMARY KEY, sha256 TEXT, built_at REAL, ver INTEGER, crd REAL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
@@ -104,7 +105,7 @@ class MaterialStore:
                 self.connection.execute("DELETE FROM producer_files WHERE path=?", (stored_path,))
                 deleted.append(Path(stored_path))
 
-        existing, updated, skipped = [], [], []
+        existing, updated, skipped, duplicates = [], [], [], []
         deserialiser = XmlDeserialiser()
         for path in paths:
             row = self.connection.execute("SELECT sha256 FROM producer_files WHERE path=?", (str(path),)).fetchone()
@@ -113,26 +114,30 @@ class MaterialStore:
                 if not force and row and row[0] == digest:
                     existing.append(path)
                     continue
-                self._upsert_file(deserialiser, path)
+                ver, crd, file_duplicates = self._upsert_file(deserialiser, path)
+                duplicates.extend(file_duplicates)
             except Exception as err:  # noqa: BLE001 - one bad producer must not abort refresh
                 print(f"{path.name}: skipped during store refresh:\n\t{err}")
                 skipped.append(path)
                 continue
             self.connection.execute(
-                "INSERT INTO producer_files(path, sha256, built_at) VALUES (?, ?, ?) "
+                "INSERT INTO producer_files(path, sha256, built_at, ver, crd) VALUES (?, ?, ?, ?, ?) "
                 "ON CONFLICT(path) DO UPDATE SET sha256=excluded.sha256, "
-                "built_at=excluded.built_at",
-                (str(path), digest, datetime.datetime.now(datetime.timezone.utc).timestamp()),
+                "built_at=excluded.built_at, ver=excluded.ver, crd=excluded.crd",
+                (str(path), digest, datetime.datetime.now(datetime.timezone.utc).timestamp(), ver, crd),
             )
             updated.append(path)
 
         self.connection.commit()
-        return Report(existing, updated, deleted, skipped)
+        return Report(existing, updated, deleted, skipped, duplicates)
 
     def _upsert_file(self, deserialiser: XmlDeserialiser, path: Path):
         tree = objectify.parse(str(path))
         root = get_valid_root(tree)
         source = deserialiser.from_element(root)
+        ver = int(source.ver)
+        crd = float(source.crd)
+        duplicates = []
         self.connection.execute("DELETE FROM materials WHERE source_file=?", (str(path),))
         for element in root.material:
             material = deserialiser.from_element(element)
@@ -157,10 +162,13 @@ class MaterialStore:
                         sqlite3.Binary(etree.tostring(element)),
                     ),
                 )
-            except sqlite3.IntegrityError as err:
-                # duplicate material id within the same source file: first
-                # occurrence wins, the row (not the whole file) is skipped.
-                print(f"{path.name}: duplicate material id {summary.id} skipped ({err})")
+            except sqlite3.IntegrityError:
+                existing_row = self.connection.execute(
+                    "SELECT source_file FROM materials WHERE id=?", (summary.id,)
+                ).fetchone()
+                kept_source = existing_row[0] if existing_row else "?"
+                duplicates.append(DuplicateInfo(summary.id, kept_source, str(path)))
+        return ver, crd, duplicates
 
     # ---------- queries ----------
 
