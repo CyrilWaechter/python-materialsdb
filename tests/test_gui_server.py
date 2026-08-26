@@ -497,3 +497,20 @@ def test_append_construction_twice_yields_single_set(api, tmp_path):
     assert len(reopened.by_type("IfcMaterial")) == 2
     psets = [p for p in reopened.by_type("IfcMaterialProperties") if p.Name == MATERIALSDB_PSET]
     assert len(psets) == 2
+
+
+def test_legacy_construction_endpoint(api):
+    server, _state = api
+    status, payload = request(
+        server,
+        "GET",
+        "/api/constructions/legacy/00000000-0000-0000-0000-000000000005",
+    )
+    assert status == 200
+    assert payload["consref"] == "REF-E"
+    variant = payload["variants"][0]
+    assert variant["layers"][0]["thickness_m"] == 0.2
+    assert status == 200
+
+    status, payload = request(server, "GET", "/api/constructions/legacy/unknown")
+    assert status == 404

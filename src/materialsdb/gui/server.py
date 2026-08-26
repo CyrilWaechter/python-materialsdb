@@ -184,6 +184,14 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             else:
                 self._send(200, payload)
             return
+        if parsed.path.startswith("/api/constructions/legacy/"):
+            material_id = unquote(parsed.path.rsplit("/", 1)[1])
+            payload = self._legacy_construction(store_, material_id)
+            if payload is None:
+                self._send(404, {"error": f"Unknown material id: {material_id}"})
+            else:
+                self._send(200, payload)
+            return
         if parsed.path == "/api/constructions":
             from materialsdb import construction as cm
 
@@ -200,6 +208,70 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._send(200, cm._to_body(construction))
             return
         self._send(404, {"error": "not found"})
+
+    def _legacy_construction(self, store_, material_id):
+        """Best-effort read-only decode of a NON-SPEC vendor construction
+        string (see construction.parse_legacy_stack). Never fatal: layers
+        with unresolvable guids are flagged instead of dropped."""
+        from materialsdb import construction as cm
+
+        material = store_.get(material_id)
+        if material is None:
+            return None
+        construction_el = getattr(material, "construction", None)
+        body = getattr(construction_el, "xml_body_text", "") or ""
+        decoded = cm.parse_legacy_stack(body)
+        country = config.get_country()
+        variants = []
+        for variant in decoded["variants"]:
+            layers = []
+            stack_layers = []
+            unresolved_count = 0
+            for layer in variant["layers"]:
+                guid = str(layer["guid"])
+                summary = store_.get_summary(guid)
+                name = ""
+                if summary is not None:
+                    name = summary.names.get(country) or summary.names.get("") or ""
+                lambda_value = cm.resolve_lambda(store_, guid, country)
+                if summary is None:
+                    unresolved_count += 1
+                else:
+                    stack_layers.append(
+                        cm.ConstructionLayer(
+                            material_id=guid, thickness_m=float(layer["thickness_m"])
+                        )
+                    )
+                layers.append(
+                    {
+                        "guid": guid,
+                        "thickness_m": float(layer["thickness_m"]),
+                        "name": name,
+                        "lambda_value": lambda_value,
+                        "resolvable": summary is not None,
+                    }
+                )
+            stack = cm.Construction(
+                name=f"{material_id[:8]} legacy",
+                design_usage=getattr(construction_el, "designusage", None),
+                layers=stack_layers,
+            )
+            result = cm.u_value(stack, store_) if stack.layers else None
+            variants.append(
+                {
+                    "header_raw": variant["header_raw"],
+                    "layers": layers,
+                    "u": result.u if result is not None else None,
+                    "unresolved_count": unresolved_count,
+                }
+            )
+        return {
+            "material_id": material_id,
+            "consref": str(getattr(construction_el, "consref", "") or ""),
+            "designusage": str(getattr(construction_el, "designusage", "") or ""),
+            "raw": decoded["raw"],
+            "variants": variants,
+        }
 
     def do_POST(self):
         parsed = urlparse(self.path)

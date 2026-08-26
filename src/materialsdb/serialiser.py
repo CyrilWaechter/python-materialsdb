@@ -115,7 +115,16 @@ class XmlDeserialiser:
                 if child is not None:
                     kwargs[child_name] = self.from_element(child, base_class)
 
-        return element_class(**kwargs)
+        instance = element_class(**kwargs)
+        # Complex elements may still carry text content (e.g. <construction>):
+        # preserve it for consumers without changing the generated classes.
+        text_content = (getattr(element, "text", None) or "").strip()
+        if text_content:
+            try:
+                instance.xml_body_text = text_content
+            except (AttributeError, TypeError):
+                pass
+        return instance
 
     def strip_optional(self, type_hint):
         if self.is_optional(type_hint):

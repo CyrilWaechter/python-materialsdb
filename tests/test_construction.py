@@ -189,3 +189,31 @@ def test_save_rejects_unknown_material_and_bad_thickness(store, tmp_path, monkey
         store,
     )
     assert any("thickness" in problem.lower() for problem in problems)
+
+
+def test_parse_legacy_stack_decodes_layers_and_preserves_tokens():
+    from materialsdb.construction import parse_legacy_stack
+
+    body = (
+        "001[0.018;0:0$0.006@6C38A204-930E-4B37-95BE-DF6D491C3D3D(I0r0f0d0t0);"
+        "0$0.05@0CE72A5F-0515-4B0E-ABCB-5867CD3634FA(OSP|I0r0f0d0t0);]"
+    )
+
+    result = parse_legacy_stack(body)
+
+    assert result["version"] == "001"
+    assert result["raw"] == body
+    variant = result["variants"][0]
+    assert variant["header_raw"] == "0.018"  # opaque, preserved verbatim
+    assert [(l["thickness_m"], l["flags_raw"]) for l in variant["layers"]] == [
+        (0.006, "I0r0f0d0t0"),
+        (0.05, "OSP|I0r0f0d0t0"),
+    ]
+
+
+def test_parse_legacy_stack_multiple_variants():
+    from materialsdb.construction import parse_legacy_stack
+
+    result = parse_legacy_stack("001[1;0$0.1@aaaaaaaa-0000-0000-0000-000000000001();][0.4;0$0.2@bbbbbbbb-0000-0000-0000-000000000002();]")
+    assert [v["header_raw"] for v in result["variants"]] == ["1", "0.4"]
+    assert all(len(v["layers"]) == 1 for v in result["variants"])

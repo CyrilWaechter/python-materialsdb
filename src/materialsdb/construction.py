@@ -340,3 +340,46 @@ def delete_construction(name_or_slug: str) -> bool:
         file.unlink()
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# NON-SPEC vendor content: some producer tools encode a layer stack inside the
+# <construction> string body (format observed as:
+#   001[HEADER;][PREFIX$]THICK@GUID(FLAGS);...
+# ). This is NOT part of materialsdb103.xsd (which defines a plain string).
+# The decoder below is best-effort and read-only: unknown tokens are preserved
+# verbatim, unresolvable guids are flagged by the caller, never fatal.
+# ---------------------------------------------------------------------------
+
+_LEGACY_LAYER_RE = re.compile(r"(?:\d+:\d+\$)?([0-9.]+)@([0-9a-fA-F-]{36})(?:\(([^)]*)\))?")
+
+
+def parse_legacy_stack(body: str) -> dict:
+    """Best-effort decode of a vendor-specific construction stack string.
+
+    Returns {"version": str, "variants": [{"header_raw": str,
+    "layers": [{"guid", "thickness_m", "flags_raw"}]}], "raw": body}.
+    Semantics of header numbers / flag letters are UNKNOWN and preserved
+    verbatim."""
+    body = body.strip()
+    version = body[:3]
+    variants = []
+    for group in re.findall(r"\[([^\]]*)\]", body):
+        header_raw = ""
+        layers = []
+        for segment in (s for s in group.split(";") if s.strip()):
+            match = _LEGACY_LAYER_RE.search(segment)
+            if match is None:
+                # not a layer -> opaque header token (only valid before layers)
+                if not layers:
+                    header_raw = segment
+                continue
+            layers.append(
+                {
+                    "guid": match.group(2),
+                    "thickness_m": float(match.group(1)),
+                    "flags_raw": match.group(3) or "",
+                }
+            )
+        variants.append({"header_raw": header_raw, "layers": layers})
+    return {"version": version, "variants": variants, "raw": body}
