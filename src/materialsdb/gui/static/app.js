@@ -30,7 +30,9 @@ let lastSelectedId = null;
 if (isEmbed) {
   const _buildItems = () => {
     const items = [];
+    const seen = new Set();
     for (const id of selected) {
+      seen.add(id);
       const layerSet = layerSelections.get(id);
       if (layerSet && layerSet.size) {
         for (const lguid of layerSet) {
@@ -41,6 +43,15 @@ if (isEmbed) {
         }
       } else {
         items.push({ material_id: id });
+      }
+    }
+    for (const [id, layerSet] of layerSelections) {
+      if (seen.has(id) || !layerSet.size) continue;
+      for (const lguid of layerSet) {
+        const det = detailCache.get(id);
+        const layerDetail = det?.layers?.find((l) => l.id === lguid);
+        const thick = layerDetail ? Number(layerDetail.thick) : 0;
+        items.push({ material_id: id, thickness_m: thick ? thick / 1000 : 0.2 });
       }
     }
     return items;
