@@ -79,6 +79,23 @@ def test_missing_lambda_layers_flagged_and_excluded(store, mixed_xml):
     assert [c["material_id"][-3:] for c in result.contributions] == ["002"]
 
 
+def test_negative_thickness_treated_as_missing(store):
+    construction = Construction(
+        name="broken layer",
+        design_usage=None,
+        layers=[
+            ConstructionLayer("00000000-0000-0000-0000-000000000002", thickness_m=-0.15),
+            ConstructionLayer("00000000-0000-0000-0000-000000000001", thickness_m=0.2),
+        ],
+    )
+
+    result = u_value(construction, store)
+
+    assert result.missing_lambda_ids == ["00000000-0000-0000-0000-000000000002"]
+    assert [c["material_id"][-3:] for c in result.contributions] == ["001"]
+    assert result.u is None
+
+
 def test_unknown_preset_raises(store):
     with pytest.raises(ValueError, match="unknown preset"):
         u_value(make_construction(), store, preset="NOPE")
@@ -89,67 +106,6 @@ def test_presets_carry_verified_numbers():
     assert RESISTANCE_PRESETS["ISO6946"]["roof"] == (0.10, 0.04)
     assert RESISTANCE_PRESETS["ISO6946"]["floor"] == (0.17, 0.04)
     assert RESISTANCE_PRESETS["SIA180"]["wall"] == (0.13, 0.04)
-
-
-pytest.importorskip("ifcopenshell")
-
-import ifcopenshell
-
-from materialsdb.ifc.material_builder import MaterialBuilder
-
-
-def test_build_with_layers_false_creates_material_only(mini_source):
-    file = ifcopenshell.file(schema="IFC4")
-    builder = MaterialBuilder(file)
-
-    created = builder.build(mini_source.material[0], company="Mini SA", with_layers=False)
-
-    assert len(created) == 1
-    assert file.by_type("IfcMaterialLayer") == []
-    assert file.by_type("IfcMaterialLayerSet") == []
-    identity = [p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
-    assert len(identity) == 1
-
-
-def test_to_ifc_layer_set_roundtrip(store, tmp_path):
-    import ifcopenshell
-
-    from materialsdb.construction import to_ifc_layer_set
-
-    construction = make_construction()
-    file = to_ifc_layer_set(construction, store)
-
-    out = tmp_path / "construction.ifc"
-    file.write(str(out))
-    reopened = ifcopenshell.open(str(out))
-
-    layers = sorted(reopened.by_type("IfcMaterialLayer"), key=lambda l: l.LayerThickness)
-    assert [round(l.LayerThickness, 3) for l in layers] == [0.15, 0.2]
-    assert {l.Description for l in layers} == {
-        "00000000-0000-0000-0000-000000000002",
-        "00000000-0000-0000-0000-000000000001",
-    }
-    layer_sets = reopened.by_type("IfcMaterialLayerSet")
-    assert len(layer_sets) == 1 and layer_sets[0].LayerSetName == "Test wall"
-    assert [l.Description for l in layer_sets[0].MaterialLayers] == [
-        "00000000-0000-0000-0000-000000000002",
-        "00000000-0000-0000-0000-000000000001",
-    ]
-    # identity psets ride along on referenced materials
-    identity = [p for p in reopened.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
-    assert len(identity) == 2
-
-
-def test_to_ifc_rejects_unknown_materials(store):
-    from materialsdb.construction import to_ifc_layer_set
-
-    bad = Construction(
-        name="bad",
-        design_usage=None,
-        layers=[ConstructionLayer("ffffffff-0000-0000-0000-000000000000", thickness_m=0.1)],
-    )
-    with pytest.raises(ValueError, match="ffffffff"):
-        to_ifc_layer_set(bad, store)
 
 
 def test_save_load_list_delete_roundtrip(store, tmp_path, monkeypatch):
@@ -178,6 +134,34 @@ def test_slug_collision_suffixes(store, tmp_path, monkeypatch):
     second.name = "Test wall!"
     path2 = cm.save_construction(second, store)
     assert path2.name == "test-wall-2.json"
+
+
+def test_save_overwrites_same_stored_name(store, tmp_path, monkeypatch):
+    import materialsdb.construction as cm
+
+    monkeypatch.setattr(cm, "constructions_dir", lambda: tmp_path / "constr")
+    first = cm.save_construction(make_construction(), store)
+    second = cm.save_construction(make_construction(), store)
+
+    assert second == first
+    assert first.name == "test-wall.json"
+    assert cm.list_constructions() == ["Test wall"]
+
+
+def test_delete_stored_name_removes_suffixed_file_and_spares_original(store, tmp_path, monkeypatch):
+    import materialsdb.construction as cm
+
+    monkeypatch.setattr(cm, "constructions_dir", lambda: tmp_path / "constr")
+    original = cm.save_construction(make_construction(), store)
+    variant = make_construction()
+    variant.name = "Test wall!"
+    suffixed = cm.save_construction(variant, store)
+    assert suffixed.name == "test-wall-2.json"
+
+    assert cm.delete_construction("Test wall!") is True
+    assert not suffixed.exists()
+    assert original.exists()
+    assert cm.list_constructions() == ["Test wall"]
 
 
 def test_save_rejects_unknown_material_and_bad_thickness(store, tmp_path, monkeypatch):

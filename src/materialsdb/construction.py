@@ -90,7 +90,7 @@ def u_value(construction: Construction, store_, preset: str = "ISO6946") -> URes
         if summary is not None:
             name = summary.names.get(config.get_lang()) or summary.names.get("") or ""
         lambda_value = resolve_lambda(store_, layer.material_id, country)
-        if lambda_value is None or not layer.thickness_m:
+        if lambda_value is None or not layer.thickness_m or layer.thickness_m <= 0:
             missing.append(layer.material_id)
             continue
         r_layer = layer.thickness_m / lambda_value
@@ -232,6 +232,14 @@ def _unique_path(directory: Path, base: str) -> Path:
     return candidate
 
 
+def _find_stored_name_file(directory: Path, name: str) -> Path | None:
+    for file in directory.glob("*.json"):
+        data = json.loads(file.read_text(encoding="utf-8"))
+        if data.get("name") == name:
+            return file
+    return None
+
+
 def validate_construction(body: dict, store_) -> tuple[Construction, list[str]]:
     problems: list[str] = []
     name = str(body.get("name") or "").strip()
@@ -281,8 +289,8 @@ def save_construction(construction: Construction, store_) -> Path:
         raise ValueError("; ".join(problems))
     directory = constructions_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    base = slugify(construction.name)
-    path = _unique_path(directory, base)
+    existing = _find_stored_name_file(directory, construction.name)
+    path = existing if existing is not None else _unique_path(directory, slugify(construction.name))
     payload = {
         "name": construction.name,
         "design_usage": construction.design_usage,
@@ -325,7 +333,9 @@ def list_constructions() -> list[str]:
 
 
 def delete_construction(name_or_slug: str) -> bool:
-    file = constructions_dir() / f"{slugify(name_or_slug)}.json"
+    directory = constructions_dir()
+    named = _find_stored_name_file(directory, name_or_slug)
+    file = named if named is not None else directory / f"{slugify(name_or_slug)}.json"
     if file.exists():
         file.unlink()
         return True
