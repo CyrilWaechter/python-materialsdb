@@ -72,6 +72,11 @@ class MaterialBuilder:
         description = utils.get_material_description(material, self.lang)
         category = str(material.information.group or "")
         if not with_layers:
+            # reuse an already-present material instead of duplicating it;
+            # its identity pset is already in place
+            existing = self.find_existing(str(material.id))
+            if existing is not None:
+                return [existing]
             ifc_material = self.file.createIfcMaterial(name, str(description), str(category))
             self._create_identity_pset(ifc_material, material, company_id, company, verxml)
             return [ifc_material]

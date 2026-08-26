@@ -29,7 +29,7 @@ function renderLayers() {
     if (index === selectedRow) tr.style.background = "#eef";
     tr.innerHTML = `<td>${index + 1}</td><td data-role="name">${esc(layer.display_name || layer.material_id)}</td>` +
       `<td><input type="number" step="1" min="1" value="${Math.round(layer.thickness_m * 1000)}" data-index="${index}" style="width:5rem"> mm</td>` +
-      `<td data-role="lambda">${esc(layer.lambda_value ?? "")}</td><td data-role="r">${esc(fmtR(index))}</td><td></td>`;
+      `<td data-role="lambda">${esc(layer.lambda_value ?? "")}</td><td data-role="r">${esc(fmtR(layer))}</td><td></td>`;
     tr.addEventListener("click", () => { selectedRow = index; renderLayers(); });
     tbody.appendChild(tr);
   });
@@ -43,8 +43,9 @@ function renderLayers() {
   });
 }
 
-function fmtR(index) {
-  return lastResult && lastResult.contributions[index] ? lastResult.contributions[index].r.toFixed(3) : "";
+function fmtR(layer) {
+  const c = lastResult && lastResult.contributions.find((x) => x.material_id === layer.material_id);
+  return c ? c.r.toFixed(3) : "";
 }
 
 function renderContributions() {

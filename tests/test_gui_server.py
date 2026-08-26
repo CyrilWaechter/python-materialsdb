@@ -19,7 +19,7 @@ def pinned_fr_ch_config(monkeypatch):
     pytest.config_recorded = recorded  # ty: ignore[unresolved-attribute] - dynamic test-global, read in test_config_roundtrip
 
 
-def request(server, method, path, payload=None, token=None):
+def request(server, method, path, payload=None, token=None, want_headers=False):
     conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
     headers = {}
     body = None
@@ -34,8 +34,12 @@ def request(server, method, path, payload=None, token=None):
     content_type = response.getheader("Content-Type") or ""
     conn.close()
     if content_type.startswith("application/json"):
-        return response.status, json.loads(data)
-    return response.status, data
+        parsed = json.loads(data)
+    else:
+        parsed = data
+    if want_headers:
+        return response.status, parsed, dict(response.getheaders())
+    return response.status, parsed
 
 
 @pytest.fixture
@@ -367,3 +371,129 @@ def test_construction_validation_error_surfaces(constructions_api):
     )
     assert status == 400
     assert "nope" in payload["error"]
+
+
+def _bare_session_file(path):
+    import uuid
+
+    from materialsdb import utils
+    from materialsdb.ifc.project_library import ProjectLibrary
+
+    library = ProjectLibrary()
+    library.create_project_library(company="Session", companyid=str(uuid.uuid4()), ver=1, crd=utils.new_tdatetime())
+    library.file.write(str(path))
+
+
+def test_export_construction_endpoint(api, tmp_path):
+    import ifcopenshell
+
+    server, state = api
+    status, body, headers = request(
+        server,
+        "POST",
+        "/api/export-construction",
+        payload={
+            "construction": {
+                "name": "rev-wall",
+                "design_usage": None,
+                "layers": [{"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15}],
+            }
+        },
+        token=state.token,
+        want_headers=True,
+    )
+    assert status == 200
+    assert "filename=" in headers.get("Content-Disposition", "")
+    out = tmp_path / "rev-wall.ifc"
+    out.write_bytes(body)
+    reopened = ifcopenshell.open(str(out))
+    sets = reopened.by_type("IfcMaterialLayerSet")
+    assert len(sets) == 1
+    assert sets[0].LayerSetName == "rev-wall"
+    assert len(reopened.by_type("IfcMaterial")) == 1
+    layers = reopened.by_type("IfcMaterialLayer")
+    assert len(layers) == 1
+    assert layers[0].LayerThickness == 0.15
+
+
+def test_append_construction_endpoint(api, tmp_path):
+    import ifcopenshell
+
+    from materialsdb.ifc.material_builder import create_material_file
+
+    server, state = api
+    store_ = state.resolve_store()
+    target = create_material_file("00000000-0000-0000-0000-000000000002", store_=store_)
+    target_path = tmp_path / "session.ifc"
+    target.write(str(target_path))
+    assert request(server, "POST", "/api/session/open", payload={"path": str(target_path)}, token=state.token)[0] == 200
+
+    construction = {
+        "name": "double",
+        "design_usage": None,
+        "layers": [
+            {"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15},
+            {"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.2},
+        ],
+    }
+    status, payload = request(
+        server, "POST", "/api/append-construction", payload={"construction": construction}, token=state.token
+    )
+    assert status == 200 and payload["layer_count"] == 2
+
+    save_as = tmp_path / "session-plus.ifc"
+    assert request(server, "POST", "/api/session/save", payload={"path": str(save_as)}, token=state.token)[0] == 200
+    reopened = ifcopenshell.open(str(save_as))
+    descriptions = {layer.Description for layer in reopened.by_type("IfcMaterialLayer")}
+    assert "00000000-0000-0000-0000-000000000001" in descriptions
+    assert "00000000-0000-0000-0000-000000000002" in descriptions
+    assert len([s for s in reopened.by_type("IfcMaterialLayerSet") if s.LayerSetName == "double"]) == 1
+
+
+def test_append_construction_requires_session(api):
+    server, state = api
+    state.file = None
+    status, payload = request(
+        server,
+        "POST",
+        "/api/append-construction",
+        payload={"construction": {"name": "x", "layers": [{"material_id": "nope", "thickness_m": 0.1}]}},
+        token=state.token,
+    )
+    assert status == 409
+    assert payload["error"] == "no session open"
+
+
+def test_append_construction_twice_yields_single_set(api, tmp_path):
+    import ifcopenshell
+
+    from materialsdb.ifc.material_builder import MATERIALSDB_PSET
+
+    server, state = api
+    session = tmp_path / "session.ifc"
+    _bare_session_file(session)
+    assert request(server, "POST", "/api/session/open", payload={"path": str(session)}, token=state.token)[0] == 200
+
+    construction = {
+        "name": "twice",
+        "design_usage": None,
+        "layers": [
+            {"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15},
+            {"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.2},
+        ],
+    }
+    for _ in range(2):
+        status, payload = request(
+            server, "POST", "/api/append-construction", payload={"construction": construction}, token=state.token
+        )
+        assert status == 200 and payload["layer_count"] == 2
+
+    save_as = tmp_path / "session-twice.ifc"
+    assert request(server, "POST", "/api/session/save", payload={"path": str(save_as)}, token=state.token)[0] == 200
+    reopened = ifcopenshell.open(str(save_as))
+    sets = [s for s in reopened.by_type("IfcMaterialLayerSet") if s.LayerSetName == "twice"]
+    assert len(sets) == 1
+    assert len(sets[0].MaterialLayers) == 2
+    assert len(reopened.by_type("IfcMaterial")) == 2
+    psets = [p for p in reopened.by_type("IfcMaterialProperties") if p.Name == MATERIALSDB_PSET]
+    assert len(psets) == 2

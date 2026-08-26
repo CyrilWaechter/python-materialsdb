@@ -112,11 +112,50 @@ def u_value(construction: Construction, store_, preset: str = "ISO6946") -> URes
     return UResult(u=u, rsi=rsi, rse=rse, contributions=contributions, missing_lambda_ids=missing)
 
 
+def _has_identity_pset(file, material) -> bool:
+    from materialsdb.ifc.material_builder import MATERIALSDB_PSET, _materials_of
+
+    for pset in file.by_type("IfcMaterialProperties"):
+        if pset.Name != MATERIALSDB_PSET:
+            continue
+        if any(m.id() == material.id() for m in _materials_of(pset)):
+            return True
+    return False
+
+
+def _purge_prior_layer_sets(file, name: str) -> None:
+    """Remove prior IfcMaterialLayerSets called `name` before a re-append.
+
+    Layers whose material carries a materialsdb identity pset are ours: their
+    materials are purged outright. Foreign materials (no identity pset) are
+    kept and merely detached from their layer references; emptied set shells
+    are dropped so the replacement set stays unique."""
+    from materialsdb.ifc.material_builder import purge_material
+
+    stale = []
+    for old_set in [s for s in file.by_type("IfcMaterialLayerSet") if s.LayerSetName == name]:
+        for layer in list(old_set.MaterialLayers or ()):
+            material = getattr(layer, "Material", None)
+            if material is not None and _has_identity_pset(file, material):
+                stale.append(material.id())
+    for guid in dict.fromkeys(stale):
+        purge_material(file, guid)
+    # re-fetch: purge may already have removed some or all of the old sets
+    for leftover in [s for s in file.by_type("IfcMaterialLayerSet") if s.LayerSetName == name]:
+        for layer in list(leftover.MaterialLayers or ()):
+            file.remove(layer)
+        if not leftover.MaterialLayers:
+            file.remove(leftover)
+
+
 def to_ifc_layer_set(construction: Construction, store_, file=None):
     """Emit a wrapper IFC library containing the construction as an
     IfcMaterialLayerSet. Referenced materials are built through
     MaterialBuilder (single representative variant) so their identity psets
-    ride along; IfcMaterialLayer.Description carries the source material guid."""
+    ride along; IfcMaterialLayer.Description carries the source material guid.
+
+    Appending into an existing session file replaces any prior layer set with
+    the same name (materials matched by their materialsdb identity)."""
     import uuid
 
     from materialsdb.ifc.material_builder import MaterialBuilder
@@ -138,6 +177,9 @@ def to_ifc_layer_set(construction: Construction, store_, file=None):
     else:
         library = None
         target_file = file
+        # purge before building: a later find_existing must not re-attach to
+        # materials that are about to be removed with the superseded set
+        _purge_prior_layer_sets(target_file, construction.name)
 
     builder = MaterialBuilder(target_file)
     material_layers = []
