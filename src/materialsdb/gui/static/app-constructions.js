@@ -209,7 +209,8 @@ async function attachLayerChoices(layer) {
 async function loadList() {
   const { constructions } = await api("/api/constructions");
   $("saved-list").innerHTML = constructions.map((name) =>
-    `<li><a href="#" data-name="${esc(name)}">${esc(name)}</a></li>`).join("") || "<li><i>none saved</i></li>";
+    `<li><a href="#" data-name="${esc(name)}">${esc(name)}</a></li>`).join("") ||
+    `<li style="color:#777;font-size:.8rem">none saved yet.<br>Create one with <b>new</b> + <b>add layer</b>, or duplicate a materialsdb construction below.</li>`;
   $("saved-list").querySelectorAll("a").forEach((a) => a.addEventListener("click", async (event) => {
     event.preventDefault();
     const construction = await api(`/api/constructions/${encodeURIComponent(a.dataset.name)}`);
@@ -223,37 +224,92 @@ let materialsdbConstructions = [];
 async function loadMaterialsdbConstructions() {
   const { materials } = await api("/api/materials?type=construction");
   materialsdbConstructions = materials;
-  $("mdb-list").innerHTML = materials.map((m) =>
-    `<li><a href="#" data-id="${esc(m.id)}">${esc(m.display_name)}</a></li>`).join("") ||
-    "<li><i>none in catalog</i></li>";
-  $("mdb-list").querySelectorAll("a").forEach((a) => a.addEventListener("click", async (event) => {
-    event.preventDefault();
-    showLegacy(a.dataset.id);
-  }));
+
+  const companySelect = $("mdb-company");
+  const companies = [...new Set(materials.map((m) => m.company))].sort();
+  companySelect.innerHTML = `<option value="">all companies</option>` +
+    companies.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+
+  const renderMdbList = () => {
+    const needle = $("mdb-search").value.trim().toLowerCase();
+    const company = companySelect.value;
+    const visible = materialsdbConstructions.filter((m) =>
+      (!company || m.company === company) &&
+      (!needle || m.display_name.toLowerCase().includes(needle)));
+    $("mdb-list").innerHTML = visible.map((m) =>
+      `<li><a href="#" data-id="${esc(m.id)}">${esc(m.display_name)}</a> ` +
+      `<span style="color:#888">· ${esc(m.company)}</span></li>`).join("") ||
+      "<li><i>no match</i></li>";
+    $("mdb-list").querySelectorAll("a").forEach((a) => a.addEventListener("click", async (event) => {
+      event.preventDefault();
+      showLegacy(a.dataset.id);
+    }));
+  };
+
+  $("mdb-search").addEventListener("input", () => clearTimeout(setTimeout(renderMdbList, 200)) || undefined);
+  let searchTimer;
+  $("mdb-search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(renderMdbList, 200); });
+  companySelect.addEventListener("change", renderMdbList);
+  renderMdbList();
 }
+
+let legacyState = null;   // {payload, variantIndex}
 
 async function showLegacy(materialId) {
   const payload = await api(`/api/constructions/legacy/${encodeURIComponent(materialId)}`);
+  legacyState = { payload, materialId, variantIndex: 0 };
+  $("composer-ui").style.display = "none";
+  const view = $("readonly-ui");
+  view.style.display = "block";
   const entry = materialsdbConstructions.find((m) => m.id === materialId);
-  const view = $("legacy-view");
-  const variantBlocks = payload.variants.map((variant, index) => {
-    const rows = variant.layers.map((l) => {
-      const flag = l.resolvable ? "" : " \u26a0 unresolvable guid";
-      return `<tr><td>${esc(l.name || l.guid.slice(0, 8))}</td>` +
-        `<td>${fmt(l.thickness_m * 1000, 0)} mm</td><td>${esc(fmt(l.lambda_value))}</td><td>${flag}</td></tr>`;
-    }).join("");
-    return `<div class="label">variant ${index + 1}${variant.header_raw ? ` (header: ${esc(variant.header_raw)})` : ""}` +
-      `${variant.u !== null && variant.u !== undefined ? ` \u00b7 U = ${variant.u.toFixed(3)} W/m2K` : " \u00b7 U n/a"}</div>` +
-      `<table style="width:100%">${rows}</table>`;
-  }).join("");
+  const chips = payload.variants.map((v, index) =>
+    `<button class="variant-chip" data-variant="${index}" style="background:${index === 0 ? "#eef" : ""}">` +
+    `variant ${index + 1}${v.layers.length ? ` (${v.layers.length} layers)` : ""}</button>`).join("");
   view.innerHTML =
-    `<h4>${esc(entry ? entry.display_name : materialId)} <span class="warn">non-spec vendor string</span></h4>` +
-    `<div>consref: ${esc(payload.consref) || "-"} \u00b7 designusage: ${esc(payload.designusage) || "-"}</div>` +
-    variantBlocks +
-    `<details style="margin-top:.4rem"><summary>raw</summary><pre style="white-space:pre-wrap">${esc(payload.raw)}</pre></details>` +
-    `<button id="copy-legacy">create editable copy</button>`;
-  view.querySelector("#copy-legacy").onclick = () => copyLegacyToComposer(materialId, payload);
-  setStatus(`materialsdb construction loaded (read-only)`);
+    `<div><button id="back-composer">← back to composer</button>` +
+    ` <h3 style="display:inline;margin-left:.5rem">${esc(entry ? entry.display_name : materialId)}` +
+    ` <span class="warn" title="this content is a non-spec vendor string; display is best-effort">non-spec vendor data</span></h3></div>` +
+    `<div style="margin:.3rem 0">consref: <b>${esc(payload.consref) || "-"}</b> · designusage: <b>${esc(payload.designusage) || "-"}</b></div>` +
+    `<div id="variant-chips">${chips}</div>` +
+    `<div id="variant-body" style="margin-top:.4rem"></div>` +
+    `<details style="margin-top:.4rem"><summary>raw vendor string</summary>` +
+    `<pre style="white-space:pre-wrap">${esc(payload.raw)}</pre></details>` +
+    `<button id="copy-legacy" style="margin-top:.5rem">create editable copy</button>`;
+  view.querySelector("#back-composer").onclick = hideLegacy;
+  view.querySelector("#variant-chips").addEventListener("click", (event) => {
+    if (event.target.dataset.variant === undefined) return;
+    legacyState.variantIndex = Number(event.target.dataset.variant);
+    view.querySelectorAll(".variant-chip").forEach((chip) =>
+      chip.style.background = chip.dataset.variant === String(legacyState.variantIndex) ? "#eef" : "");
+    renderLegacyVariant();
+  });
+  view.querySelector("#copy-legacy").onclick = () => {
+    copyLegacyToComposer(materialId, payload);
+    hideLegacy();
+  };
+  renderLegacyVariant();
+  setStatus("materialsdb construction loaded (read-only)");
+}
+
+function hideLegacy() {
+  $("readonly-ui").style.display = "none";
+  $("composer-ui").style.display = "flex";
+}
+
+function renderLegacyVariant() {
+  const { payload, variantIndex } = legacyState;
+  const entry = materialsdbConstructions.find((m) => m.id === legacyState.materialId);
+  const variant = payload.variants[variantIndex];
+  const rows = variant.layers.map((l, li) => {
+    const flag = l.resolvable ? "" : ' <span class="warn" title="guid not found in the local index">⚠ unresolved</span>';
+    return `<tr><td>${li + 1}</td><td>${esc(l.name || l.guid.slice(0, 8))}${flag}</td>` +
+      `<td>${fmt(l.thickness_m * 1000, 0)} mm</td><td>${esc(fmt(l.lambda_value))}</td></tr>`;
+  }).join("");
+  const uLine = variant.u !== null && variant.u !== undefined ? `${variant.u.toFixed(3)} W/m²K` : "n/a";
+  $("variant-body").innerHTML =
+    `<table><thead><tr><th>#</th><th>material</th><th>thickness</th><th>λ W/mK</th></tr></thead><tbody>${rows}</tbody></table>` +
+    `<p style="margin-top:.4rem"><b>U = ${uLine}</b>${variant.unresolved_count ? ` · ${variant.unresolved_count} unresolvable guid(s) excluded from the sum` : ""}</p>` +
+    (entry && entry.company ? `<p style="color:#777">producer: ${esc(entry.company)}</p>` : "");
 }
 
 async function copyLegacyToComposer(materialId, payload) {
@@ -296,14 +352,26 @@ $("delete").onclick = async () => {
   await api(`/api/constructions/${encodeURIComponent(name)}`, { method: "DELETE" });
   setStatus(`deleted ${name}`); loadList(); $("new").onclick();
 };
-$("add-layer").onclick = async () => openChooserWithChoices();
+$("add-layer").onclick = () => openChooser(addLayerFromChooser);
 
-async function openChooserWithChoices() {
-  const overlay = openChooser((materialId) => {
-    const layer = layers.find((l) => l.material_id === materialId);
-    if (layer) attachLayerChoices(layer);
-  });
-  return overlay;
+async function addLayerFromChooser(materialId) {
+  if (layers.some((l) => l.material_id === materialId)) {
+    selectedRow = layers.findIndex((l) => l.material_id === materialId);
+    setStatus("material already in construction");
+    renderLayers();
+    return;
+  }
+  const layer = { material_id: materialId, thickness_m: 0.2 };
+  layers.push(layer);
+  selectedRow = layers.length - 1;
+  renderLayers();
+  await attachLayerChoices(layer);
+  // start from the smallest manufacturer-offered thickness when known
+  if (!layer.anyThickness && layer.choices_mm && layer.choices_mm.length) {
+    layer.thickness_m = layer.choices_mm[0] / 1000;
+  }
+  renderLayers();
+  await refreshU();
 }
 document.querySelector("[data-move=up]").onclick = () => {
   if (selectedRow > 0) { [layers[selectedRow - 1], layers[selectedRow]] = [layers[selectedRow], layers[selectedRow - 1]]; selectedRow -= 1; renderLayers(); refreshU(); }
@@ -342,8 +410,6 @@ $("append-session").onclick = async () => {
     });
   setStatus(`appended layer set (${result.layer_count} layers)`);
 };
-$("formula-toggle").onclick = () => { $("formula-box").style.display = $("formula-box").style.display === "none" ? "block" : "none"; };
-
 loadList().then(() => { renderLayers(); renderContributions(); renderPreview(); });
 
 /* --- chooser modal (calls onPick with chosen material guid) --- */
