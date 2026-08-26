@@ -214,6 +214,8 @@ def test_parse_legacy_stack_decodes_layers_and_preserves_tokens():
 def test_parse_legacy_stack_multiple_variants():
     from materialsdb.construction import parse_legacy_stack
 
-    result = parse_legacy_stack("001[1;0$0.1@aaaaaaaa-0000-0000-0000-000000000001();][0.4;0$0.2@bbbbbbbb-0000-0000-0000-000000000002();]")
+    result = parse_legacy_stack(
+        "001[1;0$0.1@aaaaaaaa-0000-0000-0000-000000000001();][0.4;0$0.2@bbbbbbbb-0000-0000-0000-000000000002();]"
+    )
     assert [v["header_raw"] for v in result["variants"]] == ["1", "0.4"]
     assert all(len(v["layers"]) == 1 for v in result["variants"])

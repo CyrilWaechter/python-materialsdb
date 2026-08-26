@@ -250,11 +250,7 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 if summary is None:
                     unresolved_count += 1
                 else:
-                    stack_layers.append(
-                        cm.ConstructionLayer(
-                            material_id=guid, thickness_m=float(layer["thickness_m"])
-                        )
-                    )
+                    stack_layers.append(cm.ConstructionLayer(material_id=guid, thickness_m=float(layer["thickness_m"])))
                 layers.append(
                     {
                         "guid": guid,
