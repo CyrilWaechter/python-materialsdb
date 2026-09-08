@@ -91,6 +91,12 @@ constructions as JSON in your cache directory, export them as standalone
 `.ifc` files containing an `IfcMaterialLayerSet`, or append them into an
 already-open session file.
 
+You can also push the construction straight into the IFC model open in
+Bonsai (same target picker as the materials page): it is created or updated
+as an `IfcWallType`/`IfcSlabType`/`IfcRoofType` (per the design usage,
+generic creating all three) with its `IfcMaterialLayerSet` — undoable with
+Ctrl+Z.
+
 # Bonsai integration :
 Push materials straight from the picker into the IFC model open in
 [Bonsai](https://bonsai.ifcopenshell.org). Install
