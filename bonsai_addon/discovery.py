@@ -49,6 +49,8 @@ class ListenerClient:
         conn.close()
         if response.status == 204:
             return None
+        if response.status == 404:
+            self.registered_path = None  # server restarted/lost us: re-register on next tick
         if response.status != 200:
             raise RuntimeError(f"{method} {path} -> {response.status}: {data[:200]!r}")
         return json.loads(data) if data else None

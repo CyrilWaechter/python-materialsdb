@@ -59,7 +59,8 @@ def apply_add_materials(file, payload) -> int:
     for entry in payload.get("materials") or []:
         identity = entry["identity"]
         layer = entry.get("layer") or {}
-        key = (identity["material_id"], layer.get("layer_id"))
+        org_layer_id = (entry.get("psets") or {}).get("materialsdb.org_layer", {}).get("layer_id")
+        key = (identity["material_id"], layer.get("layer_id") or org_layer_id)
         if key in existing:
             continue
         _apply_entry(file, entry)

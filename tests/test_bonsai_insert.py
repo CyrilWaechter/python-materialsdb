@@ -84,3 +84,27 @@ def test_apply_layer_subset(store):
     assert missing == []
     assert apply_add_materials(file, payload) == 1
     assert len(file.by_type("IfcMaterialLayer")) == 1
+
+
+def test_apply_thick_less_layer_is_idempotent():
+    """layer: null entries still write a materialsdb.org_layer pset; the
+    idempotence key must read the layer_id from that pset so a re-send is a
+    no-op instead of a duplicate material."""
+    file = ifcopenshell.file(schema="IFC4")
+    payload = {
+        "materials": [
+            {
+                "name": "Thick-less material",
+                "identity": {"material_id": "00000000-0000-0000-0000-000000000003"},
+                "layer": None,
+                "psets": {"materialsdb.org_layer": {"layer_id": "00000000-0000-0000-0000-0000000000b1", "thick": 0.0}},
+            }
+        ]
+    }
+
+    assert apply_add_materials(file, payload) == 1
+    assert len(file.by_type("IfcMaterial")) == 1
+    assert len(file.by_type("IfcMaterialLayer")) == 0
+
+    assert apply_add_materials(file, payload) == 0
+    assert len(file.by_type("IfcMaterial")) == 1
