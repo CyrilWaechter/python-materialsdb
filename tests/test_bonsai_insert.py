@@ -12,7 +12,10 @@ from materialsdb.store import MaterialStore
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bonsai_addon"))
 
-from insert import apply_add_materials  # ty: ignore[unresolved-import] - add-on module on a side path
+from insert import (  # ty: ignore[unresolved-import] - add-on module on a side path
+    apply_add_construction,
+    apply_add_materials,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -125,3 +128,123 @@ def test_apply_thick_less_layer_is_idempotent():
 
     assert apply_add_materials(file, payload) == 0
     assert len(file.by_type("IfcMaterial")) == 1
+
+
+CONSTRUCTION_PAYLOAD = {
+    "action": "add_construction",
+    "construction": {
+        "name": "Mur 20+16",
+        "design_usage": "consDesignForWall",
+        "types": ["IfcWallType"],
+        "layers": [
+            {
+                "material_id": "00000000-0000-0000-0000-000000000001",
+                "thickness_m": 0.22,
+                "material": {
+                    "source_id": "00000000-0000-0000-0000-000000000001",
+                    "name": "Isolant A",
+                    "description": "Panneau isolant",
+                    "category": "Insulation",
+                    "color": 16711680,
+                    "identity": {
+                        "material_id": "00000000-0000-0000-0000-000000000001",
+                        "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
+                        "company": "Mini SA",
+                    },
+                },
+            },
+            {
+                "material_id": "00000000-0000-0000-0000-000000000002",
+                "thickness_m": 0.15,
+                "material": {
+                    "source_id": "00000000-0000-0000-0000-000000000002",
+                    "name": "Beton B",
+                    "description": "",
+                    "category": "Concrete",
+                    "color": None,
+                    "identity": {
+                        "material_id": "00000000-0000-0000-0000-000000000002",
+                        "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
+                        "company": "Mini SA",
+                    },
+                },
+            },
+        ],
+    },
+}
+
+
+def _construction_payload(**overrides):
+    import copy
+
+    payload = copy.deepcopy(CONSTRUCTION_PAYLOAD)
+    payload["construction"].update(overrides)  # ty: ignore[unresolved-attribute]
+    return payload
+
+
+def test_construction_creates_type_and_layers():
+    file = ifcopenshell.file(schema="IFC4")
+
+    summary = apply_add_construction(file, CONSTRUCTION_PAYLOAD)
+
+    assert summary == {"types_created": 1, "sets_updated": 0, "materials_created": 2}
+    types = file.by_type("IfcWallType")
+    assert len(types) == 1
+    wall_type = types[0]
+    assert wall_type.Name == "Mur 20+16"
+    assert wall_type.GlobalId  # api root.create_entity generates it
+    sets = file.by_type("IfcMaterialLayerSet")
+    assert len(sets) == 1
+    layers = sorted(sets[0].MaterialLayers, key=lambda l: l.LayerThickness)
+    assert [round(l.LayerThickness, 3) for l in layers] == [0.15, 0.22]
+    assert {l.Description for l in layers} == {
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+    }
+    associations = [a for a in wall_type.HasAssociations if a.is_a("IfcRelAssociatesMaterial")]
+    assert len(associations) == 1
+    assert associations[0].RelatingMaterial == sets[0]
+
+
+def test_construction_resend_updates_same_set():
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_construction(file, CONSTRUCTION_PAYLOAD)
+    set_before = file.by_type("IfcMaterialLayerSet")[0].id()
+
+    modified = _construction_payload()
+    modified["construction"]["layers"][0]["thickness_m"] = 0.25
+    summary = apply_add_construction(file, modified)
+
+    assert summary == {"types_created": 0, "sets_updated": 1, "materials_created": 0}
+    assert len(file.by_type("IfcWallType")) == 1  # no duplicate type
+    assert len(file.by_type("IfcMaterialLayerSet")) == 1  # same set entity, modified in place
+    assert file.by_type("IfcMaterialLayerSet")[0].id() == set_before
+    layers = file.by_type("IfcMaterialLayerSet")[0].MaterialLayers
+    assert {round(l.LayerThickness, 3) for l in layers} == {0.25, 0.15}
+
+
+def test_construction_generic_three_types_shared_set():
+    payload = _construction_payload(design_usage=None, types=["IfcWallType", "IfcSlabType", "IfcRoofType"])
+    file = ifcopenshell.file(schema="IFC4")
+
+    summary = apply_add_construction(file, payload)
+
+    assert summary["types_created"] == 3
+    assert len(file.by_type("IfcWallType")) == 1
+    assert len(file.by_type("IfcSlabType")) == 1
+    assert len(file.by_type("IfcRoofType")) == 1
+    assert len(file.by_type("IfcMaterialLayerSet")) == 1  # one shared set
+    relations = [a for a in file.by_type("IfcRelAssociatesMaterial")]
+    assert len(relations) == 1
+    assert len(relations[0].RelatedObjects) == 3
+
+
+def test_construction_reuses_preset_materials(store):
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_materials(file, _payload(store))  # materials already in the model
+
+    summary = apply_add_construction(file, CONSTRUCTION_PAYLOAD)
+
+    assert summary["materials_created"] == 1  # Isolant A reused via identity pset; Beton B created
+    materials = file.by_type("IfcMaterial")
+    assert len(materials) == 3  # 2 from apply_add_materials (Isolant A x2 layers) + Beton B

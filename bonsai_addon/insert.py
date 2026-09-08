@@ -146,3 +146,88 @@ def apply_add_materials(file, payload) -> int:
         existing.add(key)
         created += 1
     return created
+
+
+def apply_add_construction(file, payload) -> dict:
+    """Upsert a construction as typed element(s) + IfcMaterialLayerSet.
+
+    Types are created if missing and kept if present; a re-send rebuilds the
+    existing set IN PLACE (same entity, old layers removed) and re-assigns
+    all targets onto it. Generic usage shares ONE set across all types via a
+    single IfcRelAssociatesMaterial. Materials are found by their materialsdb
+    identity pset or created minimally (identity + style, no per-layer
+    psets)."""
+    construction = payload["construction"]
+    summary = {"types_created": 0, "sets_updated": 0, "materials_created": 0}
+
+    known = existing_materials_by_id(file)
+    layers = []
+    for layer in construction["layers"]:
+        material = known.get(layer["material_id"])
+        if material is None:
+            entry = layer["material"]
+            material = ifcopenshell.api.run(
+                "material.add_material",
+                file,
+                name=str(entry["name"]),
+                category=str(entry.get("category") or ""),
+                description=str(entry.get("description") or ""),
+            )
+            _add_identity_pset(file, material, entry["identity"])
+            _apply_style(file, entry, material)
+            known[layer["material_id"]] = material
+            summary["materials_created"] += 1
+        layers.append((layer, material))
+
+    name = str(construction["name"])
+    targets = []
+    for cls in construction["types"]:
+        match = [t for t in file.by_type(cls) if t.Name == name]
+        if match:
+            targets.append(match[0])
+        else:
+            targets.append(ifcopenshell.api.run("root.create_entity", file, ifc_class=cls, name=name))
+            summary["types_created"] += 1
+
+    the_set = None
+    for target in targets:
+        for association in target.HasAssociations or ():
+            relating = getattr(association, "RelatingMaterial", None)
+            if relating is not None and relating.is_a("IfcMaterialLayerSet"):
+                the_set = relating
+                break
+        if the_set is not None:
+            break
+
+    if the_set is None:
+        the_set = ifcopenshell.api.run("material.add_material_set", file, name=name, set_type="IfcMaterialLayerSet")
+    else:
+        summary["sets_updated"] += 1
+        for stale in list(the_set.MaterialLayers or ()):
+            ifcopenshell.api.run("material.remove_layer", file, layer=stale)
+
+    for layer, material in layers:
+        ifc_layer = ifcopenshell.api.run("material.add_layer", file, layer_set=the_set, material=material)
+        mm = round(float(layer["thickness_m"]) * 1000)
+        ifcopenshell.api.run(
+            "material.edit_layer",
+            file,
+            layer=ifc_layer,
+            attributes={
+                "LayerThickness": float(layer["thickness_m"]),
+                "Name": f"{layer['material']['name']} | {mm}mm",
+                "Description": str(layer["material_id"]),
+            },
+        )
+
+    for target in targets:
+        for association in list(target.HasAssociations or ()):
+            file.remove(association)
+    ifcopenshell.api.run(
+        "material.assign_material",
+        file,
+        products=[t for t in targets if t is not None],
+        type="IfcMaterialLayerSet",
+        material=the_set,
+    )
+    return summary
