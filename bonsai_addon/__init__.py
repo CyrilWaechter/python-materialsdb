@@ -1,8 +1,9 @@
-"""materialsdb listener: receive pushes from the local materialsdb picker.
+"""materialsdb listener: receive material and construction pushes from the
+local materialsdb picker.
 
-The bpy surface is intentionally thin: a timer polls the local GUI server,
-and all IFC work goes through insert.apply_add_materials (pure ifcopenshell,
-CI-tested)."""
+The bpy surface is intentionally thin: a timer polls the local GUI server
+and hands payloads to an undoable operator (tool.Ifc.Operator); all IFC work
+goes through insert.py (pure ifcopenshell.api, CI-tested)."""
 
 import typing
 
@@ -26,6 +27,9 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
         global _PENDING
         payload, _PENDING = _PENDING, None
         if payload is None:
+            return
+        if tool.Ifc.get() is None:
+            _CLIENT.report("error", "no IFC model open in Bonsai")
             return
         action = payload.get("action")
         if action == "add_materials":

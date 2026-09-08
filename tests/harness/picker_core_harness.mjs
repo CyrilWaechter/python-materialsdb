@@ -1,10 +1,16 @@
-// Headless check of PickerCore.collectItems (the picker's selection union).
+// Headless check of PickerCore.collectItems (the picker's selection union)
+// and PickerCore.startTargetPoll (Bonsai target polling).
 // Usage: node picker_core_harness.mjs <path/to/picker-core.js>
 
 import fs from "node:fs";
 
 const code = fs.readFileSync(process.argv[2], "utf8");
 const PickerCore = new Function(`${code}\nreturn PickerCore;`)();
+
+// Node has no timers; startTargetPoll uses setInterval on start and
+// clearInterval in its stop() handle.
+globalThis.setInterval = () => 0;
+globalThis.clearInterval = () => {};
 
 const { collectItems } = PickerCore;
 const setOf = (...ids) => new Set(ids);
@@ -39,6 +45,62 @@ check(
   [{ id: "A", layer_ids: ["l1", "l2", "l3"] }],
 );
 
+// startTargetPoll: fake DOM, two api responses (one applied client, then none).
+let stpFailed = 0;
+const stpCheck = (name, ok, detail) => {
+  if (!ok) {
+    stpFailed += 1;
+    console.log(`FAIL ${name}: ${detail}`);
+  }
+};
+
+const runStartTargetPoll = async () => {
+  const responses = [
+    {
+      clients: [
+        { client_id: "bonsai-test-client", model_path: "/home/u/wall.ifc", last_status: { status: "applied" } },
+      ],
+    },
+    { clients: [] },
+  ];
+  let calls = 0;
+  const apiFn = async () => responses[calls++] ?? { clients: [] };
+  const select = { style: {}, value: "", innerHTML: "", disabled: undefined };
+  const button = { style: {}, value: "", innerHTML: "", disabled: undefined };
+
+  const handle = PickerCore.startTargetPoll(apiFn, select, button);
+  await new Promise((resolve) => setImmediate(resolve)); // first (un-awaited) refresh completes
+
+  stpCheck(
+    "first refresh shows the target select",
+    select.style.display === "inline",
+    `display=${select.style.display}`,
+  );
+  stpCheck("first refresh enables the send button", button.disabled === false, `disabled=${button.disabled}`);
+  stpCheck(
+    "first refresh lists the client",
+    select.innerHTML.includes("bonsai-test-client"),
+    `html=${select.innerHTML}`,
+  );
+  stpCheck(
+    "first refresh marks an applied last_status",
+    select.innerHTML.includes("\u2713"),
+    `html=${select.innerHTML}`,
+  );
+
+  await handle.refresh();
+
+  stpCheck("empty refresh hides the target select", select.style.display === "none", `display=${select.style.display}`);
+  stpCheck("empty refresh disables the send button", button.disabled === true, `disabled=${button.disabled}`);
+};
+
+try {
+  await runStartTargetPoll();
+} catch (err) {
+  stpFailed = 1;
+  console.log(`FAIL startTargetPoll harness: ${err && err.stack ? err.stack : err}`);
+}
+
 let failed = 0;
 for (const { name, ok, actual, expected } of cases) {
   if (!ok) {
@@ -46,8 +108,9 @@ for (const { name, ok, actual, expected } of cases) {
     console.log(`FAIL ${name}: got ${JSON.stringify(actual)} want ${JSON.stringify(expected)}`);
   }
 }
-if (failed) {
-  console.log(`PICKER-CORE FAILED (${failed})`);
+if (failed || stpFailed) {
+  console.log(`PICKER-CORE FAILED (${failed + stpFailed})`);
   process.exit(1);
 }
 console.log("PICKER-CORE OK");
+console.log("START-TARGET-POLL OK");

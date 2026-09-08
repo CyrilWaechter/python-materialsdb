@@ -222,7 +222,8 @@ def apply_add_construction(file, payload) -> dict:
 
     for target in targets:
         for association in list(target.HasAssociations or ()):
-            file.remove(association)
+            if association.is_a("IfcRelAssociatesMaterial"):
+                file.remove(association)
     ifcopenshell.api.run(
         "material.assign_material",
         file,

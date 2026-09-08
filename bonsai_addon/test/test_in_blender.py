@@ -188,8 +188,10 @@ def test_construction_roundtrip_and_undo(tmp_path):
     a re-send modifies the SAME set in place, and Blender undo/redo works."""
     import bpy
 
-    server, _cache_dir, info, old_cache_env = _seeded_server(tmp_path)
+    server = None
+    old_cache_env = None
     try:
+        server, _cache_dir, info, old_cache_env = _seeded_server(tmp_path)
         port, token = info["port"], info["token"]
         client = ListenerClient()
         client.register(bonsai_addon._model_path())
@@ -259,7 +261,8 @@ def test_construction_roundtrip_and_undo(tmp_path):
         assert file.by_type("IfcMaterialLayerSet")[0].id() == set_step_id
         assert {round(l.LayerThickness, 3) for l in layer_set.MaterialLayers} == {0.25, 0.15}
 
-        _, body = _request(port, token, "GET", "/api/listener/clients")
+        status, body = _request(port, token, "GET", "/api/listener/clients")
+        assert status == 200
         assert body["clients"][0]["last_status"]["status"] == "applied"
 
         # Blender undo removes the last push; redo restores it
@@ -273,4 +276,5 @@ def test_construction_roundtrip_and_undo(tmp_path):
             0.15,
         }
     finally:
-        _stop_server(server, old_cache_env)
+        if server is not None:
+            _stop_server(server, old_cache_env)

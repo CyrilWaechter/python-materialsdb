@@ -6,6 +6,7 @@ import pytest
 pytest.importorskip("ifcopenshell")
 
 import ifcopenshell
+import ifcopenshell.api
 
 from materialsdb.gui.listener import build_add_materials_payload
 from materialsdb.store import MaterialStore
@@ -248,3 +249,27 @@ def test_construction_reuses_preset_materials(store):
     assert summary["materials_created"] == 1  # Isolant A reused via identity pset; Beton B created
     materials = file.by_type("IfcMaterial")
     assert len(materials) == 3  # 2 from apply_add_materials (Isolant A x2 layers) + Beton B
+
+
+def test_construction_keeps_non_material_associations():
+    file = ifcopenshell.file(schema="IFC4")
+    # a foreign same-named type carrying a (stub) non-material association
+    wall_type = ifcopenshell.api.run("root.create_entity", file, ifc_class="IfcWallType", name="Mur 20+16")
+    classification = file.create_entity(
+        "IfcClassification", Source=None, Edition=None, EditionDate=None, Name="Walls CS"
+    )
+    ifcopenshell.api.run(
+        "classification.add_reference",
+        file,
+        products=[wall_type],
+        identification="23.11",
+        name="Walls",
+        classification=classification,
+    )
+    assert any(a.is_a("IfcRelAssociatesClassification") for a in wall_type.HasAssociations)
+
+    summary = apply_add_construction(file, CONSTRUCTION_PAYLOAD)
+
+    assert summary["types_created"] == 0  # same-named type kept
+    assert any(a.is_a("IfcRelAssociatesClassification") for a in wall_type.HasAssociations)
+    assert any(a.is_a("IfcRelAssociatesMaterial") for a in wall_type.HasAssociations)
