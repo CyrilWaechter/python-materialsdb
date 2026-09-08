@@ -7,6 +7,8 @@ CI-tested)."""
 import typing
 
 import bpy
+from bonsai import tool
+from bonsai.bim import handler
 
 from . import insert
 from .discovery import ListenerClient
@@ -15,26 +17,12 @@ _CLIENT = None
 
 
 def _active_ifc_file():
-    """The IFC file of the model currently open in Bonsai. Tries the modern
-    bonsai tools API first, then the legacy IfcStore. Adjust here if your
-    Bonsai version moved these entry points."""
-    try:
-        from bonsai.tool import ROOT
-
-        return ROOT.get_active_model()
-    except (ImportError, AttributeError):
-        from bonsai.bim.ifc import IfcStore
-
-        return IfcStore.get_file()
+    """The IFC file of the model currently open in Bonsai (None if none open)."""
+    return tool.Ifc.get()
 
 
 def _model_path():
-    try:
-        from bonsai.bim.ifc import IfcStore
-
-        return str(getattr(IfcStore, "path", "") or "")
-    except (ImportError, AttributeError):
-        return ""
+    return str(tool.Ifc.get_path() or "")
 
 
 def _poll_timer():
@@ -51,6 +39,10 @@ def _poll_timer():
             if file is None:
                 raise RuntimeError("no IFC model open in Bonsai")
             count = insert.apply_add_materials(file, payload)
+            try:
+                handler.refresh_ui_data()
+            except Exception:  # noqa: BLE001, S110
+                pass  # cosmetic; the insert itself succeeded
             _CLIENT.report("applied", f"{count} material(s) added")
     except Exception as err:  # noqa: BLE001 - a failed push must not kill the timer
         try:
@@ -94,7 +86,7 @@ class MATERIALSDB_PT_panel(bpy.types.Panel):
         running = _CLIENT is not None
         layout = self.layout
         layout.operator("materialsdb.toggle_listener", text="Stop listener" if running else "Start listener")
-        layout.label(text="listening" if running else "stopped", icon="LINK" if running else "UNLINKED")
+        layout.label(text="listening" if running else "stopped", icon="LINKED" if running else "UNLINKED")
 
 
 def register():
