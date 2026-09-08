@@ -365,11 +365,8 @@ function openDrawer(detail) {
 }
 
 async function pickIds(action) {
-  if (!selected.size) return setStatus("select at least one material");
-  const items = [...selected].map((id) => {
-    const layers = layerSelections.get(id);
-    return layers && layers.size ? { id, layer_ids: [...layers] } : { id };
-  });
+  const items = PickerCore.collectItems(selected, layerSelections);
+  if (!items.length) return setStatus("select at least one material or layer");
   if (action === "export") {
     const blob = await api("/api/export", { method: "POST", body: JSON.stringify({ items }) });
     const url = URL.createObjectURL(blob);
@@ -418,13 +415,10 @@ async function refreshBonsaiClients() {
 }
 
 async function sendToBonsai() {
-  if (!selected.size) return setStatus("select at least one material");
+  const items = PickerCore.collectItems(selected, layerSelections);
+  if (!items.length) return setStatus("select at least one material or layer");
   const client_id = $("bonsai-target").value || bonsaiClients[0]?.client_id;
   if (!client_id) return setStatus("no Bonsai listener connected");
-  const items = [...selected].map((id) => {
-    const layers = layerSelections.get(id);
-    return layers && layers.size ? { id, layer_ids: [...layers] } : { id };
-  });
   const result = await api("/api/listener/send", {
     method: "POST",
     body: JSON.stringify({ client_id, action: "add_materials", items }),

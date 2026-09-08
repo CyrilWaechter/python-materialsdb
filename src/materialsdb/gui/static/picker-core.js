@@ -43,5 +43,27 @@ const PickerCore = (() => {
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   }
 
-  return { CATEGORY_COLORS, decimalToHex, categoryColorStyle, esc };
+  function collectItems(selected, layerSelections) {
+    /* Union of whole-material picks (`selected`) and layer picks
+     * (`layerSelections`: materialId -> Set(layerGuid)). An id present in
+     * both yields its layers (layer selection wins); each material keeps
+     * ALL its selected layers in one {id, layer_ids} entry — the server
+     * expands them into one material per layer/thickness. The embed-mode
+     * composer proxy implements the same union with a per-layer
+     * {material_id, thickness_m} shape instead. */
+    const items = [];
+    const seen = new Set();
+    for (const id of selected) {
+      seen.add(id);
+      const layers = layerSelections.get(id);
+      items.push(layers && layers.size ? { id, layer_ids: [...layers] } : { id });
+    }
+    for (const [id, layers] of layerSelections) {
+      if (seen.has(id) || !layers.size) continue;
+      items.push({ id, layer_ids: [...layers] });
+    }
+    return items;
+  }
+
+  return { CATEGORY_COLORS, decimalToHex, categoryColorStyle, esc, collectItems };
 })();
