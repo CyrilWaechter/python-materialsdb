@@ -101,11 +101,16 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
 
     def _send(self, status, payload=None, content_type="application/json", raw=None):
         body = raw if raw is not None else json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except ConnectionError:
+            # client went away mid-response (tab close, aborted fetch):
+            # drop the connection instead of crashing the handler thread
+            self.close_connection = True
 
     def _authorized(self):
         return self.headers.get("X-MaterialsDB-Token") == self.state.token

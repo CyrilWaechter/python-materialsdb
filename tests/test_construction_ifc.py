@@ -42,8 +42,8 @@ def test_build_with_layers_false_creates_material_only(mini_source):
     created = builder.build(mini_source.material[0], company="Mini SA", with_layers=False)
 
     assert len(created) == 1
-    assert file.by_type("IfcMaterialLayer") == []
-    assert file.by_type("IfcMaterialLayerSet") == []
+    assert not file.by_type("IfcMaterialLayer")
+    assert not file.by_type("IfcMaterialLayerSet")
     identity = [p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
     assert len(identity) == 1
 

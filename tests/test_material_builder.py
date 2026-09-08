@@ -185,6 +185,40 @@ def test_purge_keeps_shared_styles(mini_source):
     assert len(file.by_type("IfcSurfaceStyle")) == styles_before  # shared styles untouched
 
 
+def test_purge_sweeps_floating_styled_chains(mini_source):
+    from materialsdb.ifc.material_builder import purge_material
+
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+    a = builder.build(mini_source.material[0], company="Mini SA")  # 2 layers -> 2 IfcMaterial
+    b = builder.build(mini_source.material[1], company="Mini SA")
+    assert len(file.by_type("IfcStyledItem")) == 2
+    assert len(file.by_type("IfcStyledRepresentation")) == 2
+
+    purge_material(file, a[0].id())
+
+    # styled chains carry no Item link, so nothing re-anchors them: swept wholesale
+    assert len(file.by_type("IfcStyledItem")) == 0
+    assert len(file.by_type("IfcStyledRepresentation")) == 0
+    assert len(file.by_type("IfcSurfaceStyle")) == 2  # shared styles kept
+    remaining = {m.id() for m in file.by_type("IfcMaterial")}
+    assert remaining == {a[1].id(), b[0].id()}  # only a[0] purged
+
+
+def test_replace_cycles_do_not_accumulate_styled_chains(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    material = mini_source.material[0]
+
+    add_material(file, material, company="Mini SA", verxml=3)
+    items_before = len(file.by_type("IfcStyledItem"))
+
+    for _ in range(3):
+        add_material(file, material, company="Mini SA", verxml=3, replace=True)
+
+    assert len(file.by_type("IfcStyledItem")) <= items_before
+    assert len(file.by_type("IfcStyledRepresentation")) <= items_before
+
+
 def test_create_material_file_standalone(mini_xml, tmp_path):
     from materialsdb.ifc.material_builder import create_material_file
     from materialsdb.store import MaterialStore

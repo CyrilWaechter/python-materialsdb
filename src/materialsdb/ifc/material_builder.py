@@ -228,7 +228,9 @@ def purge_material(file, material) -> None:
 
     `material` is the guid string of an IfcMaterial currently present in the
     file (passing a stale/removed wrapper would segfault ifcopenshell).
-    Shared surface styles are intentionally kept."""
+    Shared surface styles are intentionally kept; the floating styled
+    chains (IfcStyledItem/IfcStyledRepresentation, created per build()
+    without an Item link) are swept so they do not accumulate."""
     target = {m.id() for m in file.by_type("IfcMaterial") if m.id() == material}
     for pset in list(file.by_type("IfcMaterialProperties")):
         if {m.id() for m in _materials_of(pset)} & target:
@@ -246,6 +248,14 @@ def purge_material(file, material) -> None:
                     file.remove(parent)
     for stale in [m for m in file.by_type("IfcMaterial") if m.id() in target]:
         file.remove(stale)
+    orphans = {si.id() for si in file.by_type("IfcStyledItem") if si.Item is None and not si.StyledByItem}
+    for sr in list(file.by_type("IfcStyledRepresentation")):
+        items = sr.Items or ()
+        if items and all(item.id() in orphans for item in items):
+            file.remove(sr)
+    for si in list(file.by_type("IfcStyledItem")):
+        if si.id() in orphans:
+            file.remove(si)
 
 
 def add_material(file, material, company_id="", company="", verxml=None, replace=False, layer_ids=None):

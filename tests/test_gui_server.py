@@ -1,6 +1,11 @@
 import http.client
+import io
 import json
+import socket
+import struct
 import threading
+import time
+from unittest import mock
 
 import pytest
 
@@ -276,6 +281,34 @@ def test_config_roundtrip(api):
 
     assert status == 200
     assert recorded == {"lang": "en", "country": "FR"}
+
+
+def test_client_disconnect_mid_response_is_swallowed(api):
+    """A client that aborts before the response is written (tab close,
+    aborted fetch) must not crash the handler thread with BrokenPipeError
+    nor print a socketserver traceback."""
+    server, state = api
+    body = json.dumps({"country": "CH"}).encode()
+    request_bytes = (
+        b"POST /api/config HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\n"
+        b"Content-Type: application/json\r\n"
+        + f"Content-Length: {len(body)}\r\n".encode()
+        + f"X-MaterialsDB-Token: {state.token}\r\n".encode()
+        + b"Connection: close\r\n\r\n"
+        + body
+    )
+    err = io.StringIO()
+    with mock.patch("sys.stderr", err):
+        sock = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5)
+        sock.sendall(request_bytes)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        sock.close()  # send RST: server's response write hits a dead pipe
+        time.sleep(0.3)
+    assert "Traceback" not in err.getvalue()
+    assert "Exception occurred" not in err.getvalue()
+    # server stays healthy afterwards
+    assert request(server, "GET", "/")[0] == 200
 
 
 def test_materials_rows_carry_display_name(api):
