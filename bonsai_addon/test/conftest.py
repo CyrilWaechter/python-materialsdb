@@ -34,3 +34,14 @@ def fresh_project():
     bonsai.bim.handler.load_post(None)
     bpy.ops.bim.create_project()
     yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def registered_addon():
+    import bonsai_addon
+
+    try:
+        bonsai_addon.register()
+    except Exception as err:  # noqa: BLE001 - already registered in this Blender session
+        print(f"add-on register skipped: {err}")
+    yield
