@@ -8,17 +8,38 @@ import typing
 
 import bpy
 from bonsai import tool
-from bonsai.bim import handler
 
 from . import insert
 from .discovery import ListenerClient
 
 _CLIENT = None
+_PENDING = None
 
 
-def _active_ifc_file():
-    """The IFC file of the model currently open in Bonsai (None if none open)."""
-    return tool.Ifc.get()
+class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
+    bl_idname = "materialsdb.apply_push"
+    bl_label = "materialsdb apply push"
+    bl_description = "Apply a pushed materialsdb payload to the open IFC model (undoable)"
+    bl_options: typing.ClassVar[set[str]] = {"REGISTER", "UNDO"}
+
+    def _execute(self, context):
+        global _PENDING
+        payload, _PENDING = _PENDING, None
+        if payload is None:
+            return
+        action = payload.get("action")
+        if action == "add_materials":
+            count = insert.apply_add_materials(tool.Ifc.get(), payload)
+            _CLIENT.report("applied", f"{count} material(s) added")
+        elif action == "add_construction":
+            result = insert.apply_add_construction(tool.Ifc.get(), payload)
+            _CLIENT.report(
+                "applied",
+                f"{result['types_created']} type(s) created, {result['sets_updated']} set(s) updated, "
+                f"{result['materials_created']} material(s) created",
+            )
+        else:
+            _CLIENT.report("error", f"unknown action: {action}")
 
 
 def _model_path():
@@ -26,7 +47,7 @@ def _model_path():
 
 
 def _poll_timer():
-    global _CLIENT  # noqa: PLW0602
+    global _CLIENT, _PENDING  # noqa: PLW0602
     if _CLIENT is None:
         return None  # listener stopped: unregister the timer
     try:
@@ -35,15 +56,14 @@ def _poll_timer():
             _CLIENT.register(path)
         payload = _CLIENT.poll()
         if payload is not None:
-            file = _active_ifc_file()
-            if file is None:
-                raise RuntimeError("no IFC model open in Bonsai")
-            count = insert.apply_add_materials(file, payload)
+            _PENDING = payload
             try:
-                handler.refresh_ui_data()
-            except Exception:  # noqa: BLE001, S110
-                pass  # cosmetic; the insert itself succeeded
-            _CLIENT.report("applied", f"{count} material(s) added")
+                bpy.ops.materialsdb.apply_push()
+            except Exception as err:  # noqa: BLE001 - report; never kill the poll loop
+                try:
+                    _CLIENT.report("error", str(err))
+                except Exception:  # noqa: BLE001, S110
+                    pass
     except Exception as err:  # noqa: BLE001 - a failed push must not kill the timer
         try:
             _CLIENT.report("error", str(err))
@@ -91,6 +111,7 @@ class MATERIALSDB_PT_panel(bpy.types.Panel):
 
 def register():
     bpy.utils.register_class(MATERIALSDB_OT_toggle_listener)
+    bpy.utils.register_class(MATERIALSDB_OT_apply_push)
     bpy.utils.register_class(MATERIALSDB_PT_panel)
 
 
@@ -101,3 +122,4 @@ def unregister():
         bpy.app.timers.unregister(_poll_timer)
     bpy.utils.unregister_class(MATERIALSDB_PT_panel)
     bpy.utils.unregister_class(MATERIALSDB_OT_toggle_listener)
+    bpy.utils.unregister_class(MATERIALSDB_OT_apply_push)
