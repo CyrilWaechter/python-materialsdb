@@ -62,7 +62,9 @@ class ListenerClient:
         self.registered_path = str(model_path or "")
 
     def poll(self):
-        return self._request("GET", f"/api/listener/poll?client_id={self.client_id}")
+        body = self._request("GET", f"/api/listener/poll?client_id={self.client_id}")
+        # the server wraps pushes in {"payload": ...}; callers want the push itself
+        return (body or {}).get("payload")
 
     def report(self, status, detail=""):
         self._request(

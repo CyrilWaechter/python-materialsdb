@@ -1,6 +1,7 @@
 """Regression tests for the add-on discovery client (no live server)."""
 
 import http.client
+import json
 import sys
 from pathlib import Path
 
@@ -20,11 +21,8 @@ class _StubResponse:
         return self._body
 
 
-def test_reregisters_after_server_restart(monkeypatch):
-    """A 404 (stale client_id after a GUI restart) must clear registered_path
-    so the next tick re-registers instead of polling a dead path forever."""
+def _stub_connection(monkeypatch, responses):
     calls = []
-    responses = [(200, b""), (404, b"unknown client"), (200, b"")]
 
     class StubConnection:
         def __init__(self, host, port, timeout=None):
@@ -42,6 +40,27 @@ def test_reregisters_after_server_restart(monkeypatch):
 
     monkeypatch.setattr(discovery, "read_gui_info", lambda: (5959, "tok"))
     monkeypatch.setattr(http.client, "HTTPConnection", StubConnection)
+    return calls
+
+
+def test_poll_unwraps_envelope(monkeypatch):
+    """poll() returns the push itself, not the server's {\"payload\": ...} wrapper,
+    and None when nothing is pending — the timer feeds the result straight to
+    insert.apply_add_materials."""
+    push = {"action": "add_materials", "materials": [{"name": "x"}]}
+    responses = [(200, json.dumps({"payload": push}).encode()), (204, b"")]
+    _stub_connection(monkeypatch, responses)
+
+    client = discovery.ListenerClient()
+
+    assert client.poll() == push
+    assert client.poll() is None
+
+
+def test_reregisters_after_server_restart(monkeypatch):
+    """A 404 (stale client_id after a GUI restart) must clear registered_path
+    so the next tick re-registers instead of polling a dead path forever."""
+    calls = _stub_connection(monkeypatch, [(200, b""), (404, b"unknown client"), (200, b"")])
 
     client = discovery.ListenerClient()
     client.register("/models/house.ifc")
