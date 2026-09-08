@@ -1,10 +1,11 @@
-"""Map resolved add_materials payloads onto an ifcopenshell file.
+"""Map resolved payloads onto an ifcopenshell file via ifcopenshell.api.
 
 Pure ifcopenshell (no bpy/bonsai imports) so CI can test it directly.
-Creation mirrors materialsdb.ifc.material_builder.MaterialBuilder so
-listener-inserted materials are indistinguishable from exported ones."""
+api handles GlobalId/OwnerHistory and keeps entities schema-valid; kwargs
+target the 0.9 api (add_layer takes no thickness — edit_layer sets it;
+root.create_entity takes ifc_class=)."""
 
-import ifcopenshell  # noqa: F401 - documents the runtime requirement
+import ifcopenshell.api
 
 
 def _materials_of(pset):
@@ -18,8 +19,20 @@ def _pset_props(pset):
     return {prop.Name: prop.NominalValue.wrappedValue for prop in pset.Properties}
 
 
+def existing_materials_by_id(file):
+    """material_id -> first IfcMaterial carrying a matching materialsdb pset."""
+    found = {}
+    for pset in file.by_type("IfcMaterialProperties"):
+        if pset.Name != "materialsdb":
+            continue
+        material_id = _pset_props(pset).get("material_id")
+        for material in _materials_of(pset):
+            found.setdefault(material_id, material)
+    return found
+
+
 def _existing_keys(file):
-    """(material_id, layer_id | None) pairs already present, read from the
+    """(material_id, layer_id | None) pairs already present, from the
     materialsdb identity + org_layer psets."""
     layer_of = {}
     for pset in file.by_type("IfcMaterialProperties"):
@@ -38,22 +51,66 @@ def _existing_keys(file):
     return keys
 
 
-def _ifc_text(file, value):
-    return file.create_entity("IfcText", str(value))
+def _add_identity_pset(file, material, identity):
+    pset = ifcopenshell.api.run("pset.add_pset", file, product=material, name="materialsdb")
+    ifcopenshell.api.run(
+        "pset.edit_pset",
+        file,
+        pset=pset,
+        properties={
+            "material_id": identity["material_id"],
+            "company_id": identity.get("company_id") or "",
+            "company": identity.get("company") or "",
+        },
+    )
 
 
-def _nominal(file, value):
-    if isinstance(value, bool):
-        return file.create_entity("IfcBoolean", value)
-    if isinstance(value, str):
-        return _ifc_text(file, value)
-    return file.create_entity("IfcReal", float(value))
+def _add_property_psets(file, material, psets):
+    for pset_name, props in (psets or {}).items():
+        pset = ifcopenshell.api.run("pset.add_pset", file, product=material, name=str(pset_name))
+        ifcopenshell.api.run("pset.edit_pset", file, pset=pset, properties=props)
+
+
+def _apply_style(file, material_entry, material):
+    """Best-effort schema-valid material styling; needs a representation
+    context (bonsai files have one, scratch CI files do not)."""
+    color = material_entry.get("color")
+    if not color:
+        return
+    try:
+        contexts = file.by_type("IfcRepresentationContext")
+        if not contexts:
+            return
+        color = int(color)
+        name = f"color {color}"
+        styles = {style.Name: style for style in file.by_type("IfcSurfaceStyle")}
+        style = styles.get(name)
+        if style is None:
+            style = ifcopenshell.api.run("style.add_style", file, name=name)
+            ifcopenshell.api.run(
+                "style.add_surface_style",
+                file,
+                style=style,
+                ifc_class="IfcSurfaceStyleShading",
+                attributes={
+                    "SurfaceColour": file.create_entity(
+                        "IfcColourRgb",
+                        Name=None,
+                        Red=(color >> 16) / 255,
+                        Green=((color >> 8) & 255) / 255,
+                        Blue=(color & 255) / 255,
+                    )
+                },
+            )
+        ifcopenshell.api.run("style.assign_material_style", file, material=material, style=style, context=contexts[0])
+    except Exception:  # noqa: BLE001, S110 - cosmetic; never fail the insert
+        pass
 
 
 def apply_add_materials(file, payload) -> int:
-    """Create IfcMaterial (+ identity/property psets, layer + set, surface
-    style) for each payload entry. Entries whose (material_id, layer_id) key
-    is already present are skipped. Returns the number created."""
+    """Create IfcMaterial (+ identity/property psets, layer + set, style) per
+    payload entry. Entries whose (material_id, layer_id) key already exists
+    are skipped. Returns the number created."""
     existing = _existing_keys(file)
     created = 0
     for entry in payload.get("materials") or []:
@@ -63,68 +120,29 @@ def apply_add_materials(file, payload) -> int:
         key = (identity["material_id"], layer.get("layer_id") or org_layer_id)
         if key in existing:
             continue
-        _apply_entry(file, entry)
+        material = ifcopenshell.api.run(
+            "material.add_material",
+            file,
+            name=str(entry["name"]),
+            category=str(entry.get("category") or ""),
+            description=str(entry.get("description") or ""),
+        )
+        _add_identity_pset(file, material, identity)
+        _add_property_psets(file, material, entry.get("psets"))
+        if layer:
+            thickness = float(layer["thick_m"])
+            label = f"{entry['name']} | {round(thickness * 1000)}mm"
+            layer_set = ifcopenshell.api.run(
+                "material.add_material_set", file, name=label, set_type="IfcMaterialLayerSet"
+            )
+            ifc_layer = ifcopenshell.api.run("material.add_layer", file, layer_set=layer_set, material=material)
+            ifcopenshell.api.run(
+                "material.edit_layer",
+                file,
+                layer=ifc_layer,
+                attributes={"LayerThickness": thickness, "Name": label, "Description": str(layer["layer_id"])},
+            )
+        _apply_style(file, entry, material)
         existing.add(key)
         created += 1
     return created
-
-
-def _apply_entry(file, entry):
-    material = file.createIfcMaterial(
-        str(entry["name"]), str(entry.get("description") or ""), str(entry.get("category") or "")
-    )
-    identity = entry["identity"]
-    file.create_entity(
-        "IfcMaterialProperties",
-        Name="materialsdb",
-        Properties=[
-            file.create_entity(
-                "IfcPropertySingleValue", Name="material_id", NominalValue=_ifc_text(file, identity["material_id"])
-            ),
-            file.create_entity(
-                "IfcPropertySingleValue",
-                Name="company_id",
-                NominalValue=_ifc_text(file, identity.get("company_id") or ""),
-            ),
-            file.create_entity(
-                "IfcPropertySingleValue", Name="company", NominalValue=_ifc_text(file, identity.get("company") or "")
-            ),
-        ],
-        Material=material,
-    )
-    for pset_name, props in (entry.get("psets") or {}).items():
-        properties = [
-            file.create_entity("IfcPropertySingleValue", Name=str(name), NominalValue=_nominal(file, value))
-            for name, value in props.items()
-        ]
-        file.create_entity("IfcMaterialProperties", Name=str(pset_name), Properties=properties, Material=material)
-    layer = entry.get("layer")
-    if layer:
-        thickness = float(layer["thick_m"])
-        label = f"{entry['name']} | {round(thickness * 1000)}mm"
-        ifc_layer = file.create_entity(
-            "IfcMaterialLayer",
-            Material=material,
-            LayerThickness=thickness,
-            Name=label,
-            Description=str(layer["layer_id"]),
-        )
-        file.create_entity("IfcMaterialLayerSet", MaterialLayers=[ifc_layer], LayerSetName=label)
-    _apply_style(file, entry)
-
-
-def _apply_style(file, entry):
-    """Best-effort surface style from the raw XML color decimal; identical
-    floating-chain shape to the export path (styled item without Item)."""
-    color = entry.get("color")
-    if not color:
-        return
-    try:
-        color = int(color)
-        shading = file.createIfcSurfaceStyleShading(
-            SurfaceColour=file.createIfcColourRgb(Blue=color & 255, Green=(color >> 8) & 255, Red=(color >> 16) & 255)
-        )
-        style = file.createIfcSurfaceStyle(Name=f"color {color}", Side="BOTH", Styles=[shading])
-        file.createIfcStyledItem(Styles=[style])
-    except Exception:  # noqa: BLE001, S110 - cosmetic; never fail the insert
-        pass

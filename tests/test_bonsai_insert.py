@@ -64,6 +64,23 @@ def test_apply_creates_materials_psets_layers(store):
     assert len(file.by_type("IfcMaterialLayerSet")) == 2
 
 
+def test_apply_add_materials_creates_schema_valid_entities(store):
+    file = ifcopenshell.file(schema="IFC4")
+
+    apply_add_materials(file, _payload(store))
+
+    materials = file.by_type("IfcMaterial")
+    assert len(materials) == 2
+    for material in materials:
+        assert material.Name == "Isolant A"
+        assert material.Category == "Insulation"
+        assert material.Description == "Panneau isolant"
+    assert len(file.by_type("IfcMaterialLayer")) == 2
+    assert len(file.by_type("IfcMaterialLayerSet")) == 2
+    identity = [p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
+    assert len(identity) == 2
+
+
 def test_apply_is_idempotent(store):
     file = ifcopenshell.file(schema="IFC4")
     payload = _payload(store)
