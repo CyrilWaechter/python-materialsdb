@@ -1,6 +1,7 @@
 import http.client
 import io
 import json
+import os
 import socket
 import struct
 import threading
@@ -644,3 +645,19 @@ def test_listener_stale_client_pruned(api, monkeypatch):
     assert status == 200
     assert body["clients"] == []
     assert "old" not in state.listeners
+
+
+def test_discovery_write_and_remove(tmp_path, monkeypatch):
+    monkeypatch.setattr("materialsdb.cache.get_cache_folder", lambda: tmp_path)
+
+    from materialsdb.gui import discovery
+
+    path = discovery.write_listener_info(8619, "tok123")
+    assert path == tmp_path / "gui.json"
+    import json
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"port": 8619, "token": "tok123", "pid": os.getpid()}
+
+    discovery.remove_listener_info()
+    assert not path.exists()
+    discovery.remove_listener_info()  # idempotent

@@ -3,6 +3,7 @@
 import argparse
 import webbrowser
 
+from materialsdb.gui.discovery import remove_listener_info, write_listener_info
 from materialsdb.gui.server import make_server
 
 
@@ -14,6 +15,7 @@ def main():
 
     server = make_server(port=args.port)
     url = f"http://127.0.0.1:{server.server_address[1]}"
+    write_listener_info(server.server_address[1], server.gui_state.token)
     print(f"materialsdb picker on {url} (Ctrl+C to stop)")
     if not args.no_browser:
         webbrowser.open(url)
@@ -22,8 +24,5 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        remove_listener_info()
         server.server_close()
-
-
-if __name__ == "__main__":
-    main()
