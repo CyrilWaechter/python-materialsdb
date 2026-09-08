@@ -172,22 +172,31 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         if listener is None:
             self._send(404, {"error": f"unknown listener: {client_id}"})
             return
-        items = payload.get("items") or []
-        if not items:
-            self._send(400, {"error": "items required"})
-            return
         action = str(payload.get("action") or "add_materials")
-        if action != "add_materials":
+        missing = []
+        if action == "add_materials":
+            from materialsdb.gui.listener import build_add_materials_payload
+
+            resolved, missing = build_add_materials_payload(store_, payload.get("items") or [])
+            if not resolved["materials"]:
+                self._send(400, {"error": "nothing resolvable to send", "missing": missing})
+                return
+            queued = len(resolved["materials"])
+            summary = f"{queued} material(s)"
+        elif action == "add_construction":
+            from materialsdb.gui.listener import build_add_construction_payload
+
+            resolved, problems = build_add_construction_payload(store_, payload.get("construction"))
+            if resolved is None:
+                self._send(400, {"error": "; ".join(problems)})
+                return
+            queued = len(resolved["construction"]["layers"])
+            summary = f"construction '{resolved['construction']['name']}' ({queued} layer(s))"
+        else:
             self._send(400, {"error": f"unsupported action: {action}"})
             return
-        from materialsdb.gui.listener import build_add_materials_payload
-
-        resolved, missing = build_add_materials_payload(store_, items)
-        if not resolved["materials"]:
-            self._send(400, {"error": "nothing resolvable to send", "missing": missing})
-            return
         listener["pending"] = resolved
-        self._send(200, {"ok": True, "queued": len(resolved["materials"]), "missing": missing})
+        self._send(200, {"ok": True, "queued": queued, "summary": summary, "missing": missing})
 
     def _listener_status(self, payload):
         client_id = str(payload.get("client_id") or "")

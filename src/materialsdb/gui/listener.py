@@ -78,3 +78,65 @@ def build_add_materials_payload(store_, items, country=None, lang=None):
             continue
         materials.extend(entries)
     return {"action": "add_materials", "materials": materials}, missing
+
+
+_DESIGN_USAGE_TO_TYPES = {
+    "consDesignForWall": ["IfcWallType"],
+    "consDesignForFloor": ["IfcSlabType"],
+    "consDesignForRoof": ["IfcRoofType"],
+}
+GENERIC_TYPES = ["IfcWallType", "IfcSlabType", "IfcRoofType"]
+
+
+def build_add_construction_payload(store_, body, country=None, lang=None):
+    """Resolve a construction body into a self-sufficient add_construction
+    payload (or (None, problems) when validation fails). Materials travel
+    minimal — identity/name/category/color, to_ifc_layer_set-style — and
+    find-or-create on the add-on side keys on the identity pset."""
+    from materialsdb import construction as cm
+
+    body = dict(body or {})
+    if body.get("design_usage") not in (None, *_DESIGN_USAGE_TO_TYPES):
+        body["design_usage"] = None  # unknown usage -> generic types (validate_construction would reject it)
+    construction, problems = cm.validate_construction(body, store_)
+    if problems:
+        return None, problems
+    country = country or config.get_country()
+    lang = lang or config.get_lang()
+    layers = []
+    for layer in construction.layers:
+        summary = store_.get_summary(layer.material_id)
+        material = store_.get(layer.material_id)
+        if summary is None or material is None:
+            problems.append(f"unknown material id: {layer.material_id}")
+            continue
+        color = getattr(material.information, "color", None)
+        layers.append(
+            {
+                "material_id": layer.material_id,
+                "thickness_m": layer.thickness_m,
+                "material": {
+                    "source_id": layer.material_id,
+                    "name": str(utils.get_material_name(material, lang)),
+                    "description": str(utils.get_material_description(material, lang)),
+                    "category": str(getattr(material.information, "group", "") or ""),
+                    "color": int(color) if color else None,
+                    "identity": {
+                        "material_id": layer.material_id,
+                        "company_id": str(summary.company_id or ""),
+                        "company": str(summary.company or ""),
+                    },
+                },
+            }
+        )
+    if problems:
+        return None, problems
+    return {
+        "action": "add_construction",
+        "construction": {
+            "name": construction.name,
+            "design_usage": construction.design_usage,
+            "types": _DESIGN_USAGE_TO_TYPES.get(construction.design_usage or "", GENERIC_TYPES),
+            "layers": layers,
+        },
+    }, []

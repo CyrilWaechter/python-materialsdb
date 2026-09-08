@@ -102,3 +102,85 @@ def test_payload_matches_builder_output(store, mini_source):
         assert len(matches) == 1
         # identity pset travels as the dedicated `identity` field, not in psets
         assert {k: v for k, v in matches[0].items() if k != MATERIALSDB_PSET} == entry["psets"]
+
+
+def test_build_add_construction_types_mapping(store):
+    from materialsdb.gui.listener import build_add_construction_payload
+
+    base = {"layers": [{"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15}]}
+    payload, problems = build_add_construction_payload(
+        store, body={**base, "name": "wall one", "design_usage": "consDesignForWall"}
+    )
+    assert problems == []
+    assert payload["construction"]["types"] == ["IfcWallType"]
+    payload, problems = build_add_construction_payload(
+        store, body={**base, "name": "floor one", "design_usage": "consDesignForFloor"}
+    )
+    assert payload["construction"]["types"] == ["IfcSlabType"]
+    payload, problems = build_add_construction_payload(
+        store, body={**base, "name": "roof one", "design_usage": "consDesignForRoof"}
+    )
+    assert payload["construction"]["types"] == ["IfcRoofType"]
+    payload, problems = build_add_construction_payload(
+        store, body={**base, "name": "generic one", "design_usage": None}
+    )
+    assert payload["construction"]["types"] == ["IfcWallType", "IfcSlabType", "IfcRoofType"]
+    payload, problems = build_add_construction_payload(
+        store, body={**base, "name": "odd one", "design_usage": "garbage"}
+    )
+    assert payload["construction"]["types"] == ["IfcWallType", "IfcSlabType", "IfcRoofType"]
+
+
+def test_build_add_construction_payload_shape(store):
+    from materialsdb.gui.listener import build_add_construction_payload
+
+    payload, problems = build_add_construction_payload(
+        store,
+        body={
+            "name": "Mur 20+16",
+            "design_usage": "consDesignForWall",
+            "layers": [
+                {"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.22},  # custom thickness
+                {"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15},
+            ],
+        },
+    )
+
+    assert problems == []
+    construction = payload["construction"]
+    assert construction["name"] == "Mur 20+16"
+    assert construction["design_usage"] == "consDesignForWall"
+    assert [layer["thickness_m"] for layer in construction["layers"]] == [
+        0.22,
+        0.15,
+    ]  # construction thickness, not manufacturer
+    first = construction["layers"][0]["material"]
+    assert first["name"] == "Isolant A"
+    assert first["category"] == "Insulation"
+    assert first["identity"] == {
+        "material_id": "00000000-0000-0000-0000-000000000001",
+        "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
+        "company": "Mini SA",
+    }
+    assert "psets" not in first  # minimal to_ifc_layer_set-style material
+
+
+def test_build_add_construction_reports_problems(store):
+    from materialsdb.gui.listener import build_add_construction_payload
+
+    payload, problems = build_add_construction_payload(store, body={"name": "", "layers": []})
+
+    assert payload is None
+    assert "name required" in problems
+    assert "at least one layer required" in problems
+
+
+def test_build_add_construction_unknown_material(store):
+    from materialsdb.gui.listener import build_add_construction_payload
+
+    payload, problems = build_add_construction_payload(
+        store, body={"name": "x", "layers": [{"material_id": "nope", "thickness_m": 0.1}]}
+    )
+
+    assert payload is None
+    assert any("nope" in problem for problem in problems)

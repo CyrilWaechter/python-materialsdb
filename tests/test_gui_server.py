@@ -647,6 +647,56 @@ def test_listener_stale_client_pruned(api, monkeypatch):
     assert "old" not in state.listeners
 
 
+def test_listener_send_add_construction(api):
+    server, state = api
+    status, _ = request(
+        server,
+        "POST",
+        "/api/listener/register",
+        payload={"client_id": "c1", "model_path": "/tmp/m.ifc"},
+        token=state.token,
+    )
+    assert status == 200
+
+    status, body = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={
+            "client_id": "c1",
+            "action": "add_construction",
+            "construction": {
+                "name": "Mur 20+16",
+                "design_usage": "consDesignForWall",
+                "layers": [{"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15}],
+            },
+        },
+        token=state.token,
+    )
+    assert status == 200
+    assert body["queued"] == 1  # layers count
+    assert "Mur 20+16" in body["summary"]
+
+    status, body = request(server, "GET", "/api/listener/poll?client_id=c1", token=state.token)
+    assert status == 200
+    assert body["payload"]["action"] == "add_construction"
+    assert body["payload"]["construction"]["types"] == ["IfcWallType"]
+
+
+def test_listener_send_add_construction_invalid(api):
+    server, state = api
+    request(server, "POST", "/api/listener/register", payload={"client_id": "c1", "model_path": ""}, token=state.token)
+    status, body = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={"client_id": "c1", "action": "add_construction", "construction": {"name": ""}},
+        token=state.token,
+    )
+    assert status == 400
+    assert "name required" in body["error"]
+
+
 def test_discovery_write_and_remove(tmp_path, monkeypatch):
     monkeypatch.setattr("materialsdb.cache.get_cache_folder", lambda: tmp_path)
 
