@@ -547,3 +547,100 @@ def test_legacy_construction_endpoint(api):
 
     status, payload = request(server, "GET", "/api/constructions/legacy/unknown")
     assert status == 404
+
+
+def test_listener_register_poll_send_roundtrip(api):
+    server, state = api
+    status, _ = request(
+        server,
+        "POST",
+        "/api/listener/register",
+        payload={"client_id": "c1", "model_path": "/tmp/model.ifc"},
+        token=state.token,
+    )
+    assert status == 200
+
+    # empty poll -> 204, keeps listener alive
+    conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
+    conn.request("GET", "/api/listener/poll?client_id=c1", headers={"X-MaterialsDB-Token": state.token})
+    response = conn.getresponse()
+    response.read()
+    conn.close()
+    assert response.status == 204
+
+    # send queues, next poll returns and clears it
+    status, body = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={
+            "client_id": "c1",
+            "action": "add_materials",
+            "items": [{"id": "00000000-0000-0000-0000-000000000001"}],
+        },
+        token=state.token,
+    )
+    assert status == 200
+    assert body["queued"] >= 1  # Task 2 tightens this to == 2 (one entry per layer)
+    assert body["missing"] == []
+
+    status, body = request(server, "GET", "/api/listener/poll?client_id=c1", token=state.token)
+    assert status == 200
+    assert body["payload"]["action"] == "add_materials"
+
+    status, body = request(server, "GET", "/api/listener/poll?client_id=c1", token=state.token)
+    assert status == 204  # cleared
+
+
+def test_listener_send_unknown_client_404(api):
+    server, state = api
+    status, body = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={"client_id": "ghost", "action": "add_materials", "items": [{"id": "x"}]},
+        token=state.token,
+    )
+    assert status == 404
+    assert "ghost" in body["error"]
+
+
+def test_listener_requires_token(api):
+    server, _state = api
+    assert request(server, "POST", "/api/listener/register", payload={"client_id": "c"})[0] == 403
+    assert request(server, "GET", "/api/listener/poll?client_id=c")[0] == 403
+
+
+def test_listener_status_and_clients(api):
+    server, state = api
+    request(
+        server,
+        "POST",
+        "/api/listener/register",
+        payload={"client_id": "c1", "model_path": "/tmp/m.ifc"},
+        token=state.token,
+    )
+    status, _ = request(
+        server,
+        "POST",
+        "/api/listener/status",
+        payload={"client_id": "c1", "status": "applied", "detail": "2 material(s)"},
+        token=state.token,
+    )
+    assert status == 200
+    status, body = request(server, "GET", "/api/listener/clients", token=state.token)
+    assert status == 200
+    assert body["clients"] == [
+        {"client_id": "c1", "model_path": "/tmp/m.ifc", "last_status": {"status": "applied", "detail": "2 material(s)"}}
+    ]
+
+
+def test_listener_stale_client_pruned(api, monkeypatch):
+    server, state = api
+    request(server, "POST", "/api/listener/register", payload={"client_id": "old", "model_path": ""}, token=state.token)
+    listener = state.listeners["old"]
+    listener["last_seen"] -= 10  # older than the 5s threshold
+    status, body = request(server, "GET", "/api/listener/clients", token=state.token)
+    assert status == 200
+    assert body["clients"] == []
+    assert "old" not in state.listeners

@@ -3,6 +3,7 @@
 import http.server
 import json
 import secrets
+import time
 from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -11,6 +12,8 @@ from materialsdb import config, utils
 from materialsdb.ifc.material_builder import add_material
 
 STATIC_DIR = Path(__file__).with_name("static")
+
+_LISTENER_STALE_S = 5.0
 
 
 def _float(value):
@@ -24,12 +27,19 @@ def _resolve_display_name(names, lang):
     return str(names.get(lang) or names.get("") or "")
 
 
+def _resolve_add_materials(store_, items):
+    """Task-1 stub: echo items; replaced by gui.listener in Task 2."""
+    return {"action": "add_materials", "materials": [{"item": i} for i in items]}, []
+
+
 class GuiState:
     def __init__(self, store=None):
         self.token = secrets.token_urlsafe(16)
         self.store = store
         self.session_path = None
         self.file = None
+        # client_id -> {"model_path": str, "last_seen": float, "pending": dict | None, "last_status": dict | None}
+        self.listeners = {}
 
     def resolve_store(self):
         if self.store is not None:
@@ -119,6 +129,88 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b""
         return json.loads(raw) if raw else {}
+
+    def _prune_listeners(self):
+        now = time.time()
+        stale = [cid for cid, l in self.state.listeners.items() if now - l["last_seen"] > _LISTENER_STALE_S]
+        for cid in stale:
+            del self.state.listeners[cid]
+
+    def _listener_register(self, payload):
+        client_id = str(payload.get("client_id") or "")
+        if not client_id:
+            self._send(400, {"error": "client_id required"})
+            return
+        self._prune_listeners()
+        self.state.listeners[client_id] = {
+            "model_path": str(payload.get("model_path") or ""),
+            "last_seen": time.time(),
+            "pending": None,
+            "last_status": None,
+        }
+        self._send(200, {"ok": True})
+
+    def _listener_poll(self, parsed):
+        client_id = (parse_qs(parsed.query).get("client_id") or [""])[0]
+        listener = self.state.listeners.get(client_id)
+        if listener is None:
+            self._send(404, {"error": f"unknown listener: {client_id}"})
+            return
+        listener["last_seen"] = time.time()
+        payload = listener["pending"]
+        listener["pending"] = None
+        if payload is None:
+            self._send_204()
+            return
+        self._send(200, {"payload": payload})
+
+    def _send_204(self):
+        try:
+            self.send_response(204)
+            self.end_headers()
+        except ConnectionError:
+            self.close_connection = True
+
+    def _listener_send(self, store_, payload):
+        client_id = str(payload.get("client_id") or "")
+        listener = self.state.listeners.get(client_id)
+        if listener is None:
+            self._send(404, {"error": f"unknown listener: {client_id}"})
+            return
+        items = payload.get("items") or []
+        if not items:
+            self._send(400, {"error": "items required"})
+            return
+        action = str(payload.get("action") or "add_materials")
+        if action != "add_materials":
+            self._send(400, {"error": f"unsupported action: {action}"})
+            return
+        resolved, missing = _resolve_add_materials(store_, items)
+        if not resolved["materials"]:
+            self._send(400, {"error": "nothing resolvable to send", "missing": missing})
+            return
+        listener["pending"] = resolved
+        self._send(200, {"ok": True, "queued": len(resolved["materials"]), "missing": missing})
+
+    def _listener_status(self, payload):
+        client_id = str(payload.get("client_id") or "")
+        listener = self.state.listeners.get(client_id)
+        if listener is None:
+            self._send(404, {"error": f"unknown listener: {client_id}"})
+            return
+        listener["last_status"] = {
+            "status": str(payload.get("status") or "error"),
+            "detail": str(payload.get("detail") or ""),
+        }
+        self._send(200, {"ok": True})
+
+    def _listener_clients(self):
+        self._prune_listeners()
+        clients = [
+            {"client_id": cid, "model_path": l["model_path"], "last_status": l["last_status"]}
+            for cid, l in sorted(self.state.listeners.items())
+        ]
+        self._send(200, {"clients": clients})
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -214,6 +306,18 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             from materialsdb import config as cfg
 
             self._send(200, {"lang": cfg.get_lang(), "country": cfg.get_country()})
+            return
+        if parsed.path == "/api/listener/poll":
+            if not self._authorized():
+                self._send(403, {"error": "forbidden"})
+                return
+            self._listener_poll(parsed)
+            return
+        if parsed.path == "/api/listener/clients":
+            if not self._authorized():
+                self._send(403, {"error": "forbidden"})
+                return
+            self._listener_clients()
             return
         if parsed.path.startswith("/api/constructions/"):
             from materialsdb import construction as cm
@@ -319,6 +423,12 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._append_construction(store_, payload)
             elif parsed.path.startswith("/api/constructions/"):
                 self._construction_save(store_, parsed, payload)
+            elif parsed.path == "/api/listener/register":
+                self._listener_register(payload)
+            elif parsed.path == "/api/listener/send":
+                self._listener_send(store_, payload)
+            elif parsed.path == "/api/listener/status":
+                self._listener_status(payload)
             else:
                 self._send(404, {"error": "not found"})
         except Exception as err:  # noqa: BLE001 - one bad request must not kill the server
