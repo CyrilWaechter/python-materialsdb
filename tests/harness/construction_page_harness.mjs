@@ -94,7 +94,12 @@ globalThis.Response = Response;
 // ---- load the real frontend ----
 const src = fs.readFileSync(process.argv[2], "utf-8");
 const sandbox = { window: globalThis.window, document: globalThis.document, fetch: fakeFetch, Response,
-                  console, setTimeout, clearTimeout, Math, JSON, Promise, Number, String, Object, Array };
+                  console, setTimeout, clearTimeout, Math, JSON, Promise, Number, String, Object, Array,
+                  PickerCore: {
+                    esc: (v) => String(v ?? ""),
+                    categoryColorStyle: () => "#fff",
+                    startTargetPoll: () => ({ current: () => null, refresh: async () => {}, stop: () => {} }),
+                  } };
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(src + "\n;Object.assign(globalThis,{__get:(id)=>document.getElementById(id),__addLayer:addLayerFromChooser,__layers:()=>layers,__render:renderLayers,__evalInContext:(code)=>eval(code)});", sandbox);

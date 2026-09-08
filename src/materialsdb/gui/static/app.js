@@ -393,37 +393,16 @@ async function saveSession() {
   setStatus(`saved ${result.saved}`);
 }
 
-let bonsaiClients = [];
-
-async function refreshBonsaiClients() {
-  try {
-    const { clients } = await api("/api/listener/clients");
-    bonsaiClients = clients;
-  } catch {
-    bonsaiClients = [];
-  }
-  const sel = $("bonsai-target");
-  sel.style.display = bonsaiClients.length ? "inline" : "none";
-  $("send-bonsai").disabled = !bonsaiClients.length;
-  const previous = sel.value;
-  sel.innerHTML = bonsaiClients.map((c) => {
-    const label = c.model_path ? c.model_path.split(/[\\/]/).pop() : "Bonsai";
-    const mark = c.last_status ? (c.last_status.status === "applied" ? " \u2713" : " \u2717") : "";
-    return `<option value="${esc(c.client_id)}">${esc(label)}${mark}</option>`;
-  }).join("");
-  if (bonsaiClients.some((c) => c.client_id === previous)) sel.value = previous;
-}
-
 async function sendToBonsai() {
   const items = PickerCore.collectItems(selected, layerSelections);
   if (!items.length) return setStatus("select at least one material or layer");
-  const client_id = $("bonsai-target").value || bonsaiClients[0]?.client_id;
+  const client_id = bonsaiTarget.current();
   if (!client_id) return setStatus("no Bonsai listener connected");
   const result = await api("/api/listener/send", {
     method: "POST",
     body: JSON.stringify({ client_id, action: "add_materials", items }),
   });
-  setStatus(`sent to Bonsai: ${result.queued} material(s)${result.missing.length ? `, missing ${result.missing.length}` : ""}`);
+  setStatus(`sent to Bonsai: ${result.summary}`);
 }
 
 function setStatus(text) { $("status").textContent = text; return text; }
@@ -437,8 +416,7 @@ $("refresh").onclick = async () => {
   setStatus(`cache refreshed: ${report.existing} unchanged, ${report.updated.length} updated`);
 };
 $("send-bonsai").onclick = () => sendToBonsai().catch((err) => setStatus(err.message));
-setInterval(refreshBonsaiClients, 2000);
-refreshBonsaiClients();
+const bonsaiTarget = PickerCore.startTargetPoll(api, $("bonsai-target"), $("send-bonsai"));
 
 let debounceTimer;
 $("text").addEventListener("input", () => {

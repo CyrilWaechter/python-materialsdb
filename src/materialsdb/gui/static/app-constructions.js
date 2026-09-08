@@ -434,6 +434,28 @@ $("save").onclick = async () => {
       layers: layers.map((l) => ({ material_id: l.material_id, thickness_m: l.thickness_m })) }) });
   setStatus(`saved ${name} (overwrites same-name construction)`); loadList();
 };
+
+const bonsaiTarget = PickerCore.startTargetPoll(api, $("bonsai-target"), $("send-bonsai"));
+
+$("send-bonsai").onclick = async () => {
+  if (!layers.length) return setStatus("add at least one layer");
+  if (!$("name").value.trim()) return setStatus("name the construction before sending");
+  const client_id = bonsaiTarget.current();
+  if (!client_id) return setStatus("no Bonsai listener connected");
+  const result = await api("/api/listener/send", {
+    method: "POST",
+    body: JSON.stringify({
+      client_id,
+      action: "add_construction",
+      construction: {
+        name: $("name").value.trim(),
+        design_usage: $("design-usage").value || null,
+        layers: layers.map((l) => ({ material_id: l.material_id, thickness_m: l.thickness_m })),
+      },
+    }),
+  });
+  setStatus(`sent to Bonsai: ${result.summary}`);
+};
 $("export-ifc").onclick = async () => {
   const name = $("name").value.trim(); if (!name || !layers.length) return setStatus("nothing to export");
   const blob = await api("/api/export-construction", { method: "POST",

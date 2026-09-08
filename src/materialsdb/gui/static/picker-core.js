@@ -65,5 +65,32 @@ const PickerCore = (() => {
     return items;
   }
 
-  return { CATEGORY_COLORS, decimalToHex, categoryColorStyle, esc, collectItems };
+  function startTargetPoll(apiFn, select, button) {
+    let clients = [];
+    const refresh = async () => {
+      try {
+        clients = (await apiFn("/api/listener/clients")).clients;
+      } catch {
+        clients = [];
+      }
+      select.style.display = clients.length ? "inline" : "none";
+      if (button) button.disabled = !clients.length;
+      const previous = select.value;
+      select.innerHTML = clients.map((c) => {
+        const label = c.model_path ? c.model_path.split(/[\\/]/).pop() : "Bonsai";
+        const mark = c.last_status ? (c.last_status.status === "applied" ? " \u2713" : " \u2717") : "";
+        return `<option value="${esc(c.client_id)}">${esc(label)}${mark}</option>`;
+      }).join("");
+      if (clients.some((c) => c.client_id === previous)) select.value = previous;
+    };
+    refresh();
+    const timer = setInterval(refresh, 2000);
+    return {
+      refresh,
+      stop: () => clearInterval(timer),
+      current: () => select.value || (clients[0] ? clients[0].client_id : null) || null,
+    };
+  }
+
+  return { CATEGORY_COLORS, decimalToHex, categoryColorStyle, esc, collectItems, startTargetPoll };
 })();
