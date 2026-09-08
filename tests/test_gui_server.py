@@ -581,7 +581,7 @@ def test_listener_register_poll_send_roundtrip(api):
         token=state.token,
     )
     assert status == 200
-    assert body["queued"] >= 1  # Task 2 tightens this to == 2 (one entry per layer)
+    assert body["queued"] == 2  # Isolant A has 2 layers -> 2 IfcMaterial entries
     assert body["missing"] == []
 
     status, body = request(server, "GET", "/api/listener/poll?client_id=c1", token=state.token)

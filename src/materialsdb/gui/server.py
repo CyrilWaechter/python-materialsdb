@@ -27,11 +27,6 @@ def _resolve_display_name(names, lang):
     return str(names.get(lang) or names.get("") or "")
 
 
-def _resolve_add_materials(store_, items):
-    """Task-1 stub: echo items; replaced by gui.listener in Task 2."""
-    return {"action": "add_materials", "materials": [{"item": i} for i in items]}, []
-
-
 class GuiState:
     def __init__(self, store=None):
         self.token = secrets.token_urlsafe(16)
@@ -185,7 +180,9 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         if action != "add_materials":
             self._send(400, {"error": f"unsupported action: {action}"})
             return
-        resolved, missing = _resolve_add_materials(store_, items)
+        from materialsdb.gui.listener import build_add_materials_payload
+
+        resolved, missing = build_add_materials_payload(store_, items)
         if not resolved["materials"]:
             self._send(400, {"error": "nothing resolvable to send", "missing": missing})
             return
