@@ -9,7 +9,7 @@ pip install -e ".[ifc]"   # dev install; lxml core, ifcopenshell via extra
 pip install -e ".[dev]"   # dev tools: pytest, pytest-benchmark, ruff, ty
 python3 -m pytest -p no:pytest-blender -q   # full suite; testpaths set in pyproject.toml
 python3 -m pytest -p no:pytest-blender tests/test_serialiser.py   # single file
-ruff check --exclude src/materialsdb/classes.py src tests dev_utils examples   # lint
+ruff check --exclude src/materialsdb/classes.py src tests dev_utils examples bonsai_addon   # lint
 ruff format --exclude src/materialsdb/classes.py .                              # format
 ty check --project .                                                            # type check
 ```
@@ -46,3 +46,4 @@ ty check --project .                                                            
 - `cache.py` downloads producer/index XML from materialsdb.org into `~/.cache/materialsdb` (honors `XDG_CACHE_HOME`/`APPDATA`) — cache-refresh paths require network access.
 - Materials data is localized: language/country come from `config.set_lang()/set_country()` (ISO 639-1 / ISO 3166-1 alpha-2 codes).
 - Root `.env` documents an alternative dev setup via `PYTHONPATH` pointing at `src/` plus a local IfcOpenShell checkout instead of pip install.
+- `bonsai_addon/` is a Blender 4.2+ extension (Bonsai listener) — linted by ruff but **excluded from ty** (bpy/bonsai imports unresolvable; `tool.ty.src.include` deliberately omits it). Build the install zip with `python3 dev_utils/build_bonsai_addon.py` → `dist/materialsdb_listener.zip`. Its `insert.py` is pure ifcopenshell and CI-tested; the bpy/bonsai wiring in `__init__.py` is manual-checklist only.

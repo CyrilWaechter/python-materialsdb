@@ -1,0 +1,11 @@
+schema_version = "1.0.0"
+
+id = "materialsdb_listener"
+version = "0.1.0"
+name = "materialsdb listener"
+tagline = "Receive materials pushed from the local materialsdb picker"
+maintainer = "Cyril Waechter <cyrwae@hotmail.com>"
+type = "add-on"
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+permissions = ["files", "network"]

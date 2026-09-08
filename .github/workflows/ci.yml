@@ -20,7 +20,7 @@ jobs:
           pip install -e ".[ifc,dev]"
       - name: Lint (ruff)
         run: |
-          ruff check --exclude src/materialsdb/classes.py src tests dev_utils examples
+          ruff check --exclude src/materialsdb/classes.py src tests dev_utils examples bonsai_addon
           ruff format --exclude src/materialsdb/classes.py --check .
       - name: Type check (ty)
         run: ty check --project .
