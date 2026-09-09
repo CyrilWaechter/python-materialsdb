@@ -6,6 +6,7 @@ version is rewritten for the zipped copy and the zip gains a versioned
 name (Blender's update flow compares manifest versions)."""
 
 import argparse
+import re
 import zipfile
 from pathlib import Path
 
@@ -22,10 +23,15 @@ def build(version: str | None = None, out_dir: Path | None = None) -> Path:
         for file in sorted(SRC.rglob("*")):
             if file.is_file() and "__pycache__" not in file.parts:
                 if version and file.name == "blender_manifest.toml":
-                    zf.writestr(
-                        file.relative_to(SRC).as_posix(),
-                        file.read_text("utf-8").replace('version = "0.1.0"', f'version = "{version}"'),
+                    manifest, replaced = re.subn(
+                        r'(?m)^version = "[^"]*"$',
+                        f'version = "{version}"',
+                        file.read_text("utf-8"),
+                        count=1,
                     )
+                    if replaced != 1:
+                        raise RuntimeError(f"could not inject version into {file}: no 'version = …' line")
+                    zf.writestr(file.relative_to(SRC).as_posix(), manifest)
                 else:
                     zf.write(file, file.relative_to(SRC))
     return out
