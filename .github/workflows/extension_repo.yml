@@ -1,0 +1,39 @@
+name: Extension repository
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Download Blender
+        run: |
+          wget -q -O blender.tar.xz https://download.blender.org/release/Blender5.2/blender-5.2.0-linux-x64.tar.xz
+          tar -xf blender.tar.xz
+          echo "$(find blender-*/ -maxdepth 0 -exec readlink -f {} \;)" >> "$GITHUB_PATH"
+      - name: Build extension with the release version
+        run: python3 dev_utils/build_bonsai_addon.py --version "${GITHUB_REF_NAME#v}"
+      - name: Assemble repository directory
+        run: |
+          mkdir repo
+          cp dist/materialsdb_listener-*.zip repo/
+      - name: Generate repository listing
+        run: blender --command extension server-generate --repo-dir repo --html
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: repo
+          force_orphan: true
+          commit_message: "Extension repository ${{ github.event.release.tag_name }}"
