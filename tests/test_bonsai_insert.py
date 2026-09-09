@@ -431,13 +431,14 @@ def test_read_construction_materialless_layer_becomes_placeholder():
     file = ifcopenshell.file(schema="IFC4")
     type_element, layer_set = _make_type_with_layer_set(file)
     ifcopenshell.api.run("material.add_layer", file, layer_set=layer_set, material=None)
-    # this ifcopenshell defaults add_layer thickness to 0.1; reset to None to exercise the unset contract
+    # this ifcopenshell defaults add_layer thickness to 0.1; reset to 0 to exercise
+    # the missing-thickness contract (reader: `float(thickness) if thickness else 0.0`)
     ifcopenshell.api.run(
-        "material.edit_layer", file, layer=layer_set.MaterialLayers[0], attributes={"LayerThickness": None}
+        "material.edit_layer", file, layer=layer_set.MaterialLayers[0], attributes={"LayerThickness": 0.0}
     )
 
     construction = read_construction_from_element(type_element)
 
     assert construction["layers"][0]["material_id"] is None
-    assert construction["layers"][0]["thickness_m"] == 0.0  # LayerThickness never set
+    assert construction["layers"][0]["thickness_m"] == 0.0  # LayerThickness 0 counts as missing
     assert construction["layers"][0]["placeholder"] == {"name": "", "lambda_value": None}
