@@ -222,13 +222,6 @@ def test_construction_roundtrip_and_undo(tmp_path):
             assert bonsai_addon._poll_timer() == 1.0
         finally:
             bonsai_addon._CLIENT = previous
-        # Background sessions start with Blender's undo system disabled and
-        # UNDO operators push no steps there (in the GUI the window manager
-        # pushes them); an explicit undo_push initializes the system and
-        # captures the post-apply state so ed.undo()/ed.redo() exercise the
-        # same props.last_transaction wiring Ctrl+Z uses.
-        bpy.ops.ed.undo_push(message="materialsdb push 1")
-
         file = tool.Ifc.get()
         assert file is not None
         wall_types = file.by_type("IfcWallType")
@@ -261,7 +254,6 @@ def test_construction_roundtrip_and_undo(tmp_path):
             assert bonsai_addon._poll_timer() == 1.0
         finally:
             bonsai_addon._CLIENT = previous
-        bpy.ops.ed.undo_push(message="materialsdb push 2")
         assert len(file.by_type("IfcWallType")) == 1  # upsert, no duplicate
         assert len(file.by_type("IfcMaterialLayerSet")) == 1
         assert file.by_type("IfcMaterialLayerSet")[0].id() == set_step_id
@@ -318,6 +310,7 @@ def test_undo_removes_pushed_type_and_object(tmp_path):
         assert status == 200, body
 
         # marker BEFORE the push: undo() then reverts to this snapshot
+        # (the timer pushes its own titled step after a successful apply)
         bpy.ops.ed.undo_push(message="pre-push")
         previous = bonsai_addon._CLIENT
         bonsai_addon._CLIENT = client
@@ -325,7 +318,6 @@ def test_undo_removes_pushed_type_and_object(tmp_path):
             assert bonsai_addon._poll_timer() == 1.0
         finally:
             bonsai_addon._CLIENT = previous
-        bpy.ops.ed.undo_push(message="materialsdb push")
 
         file = tool.Ifc.get()
         assert len(file.by_type("IfcWallType")) == 1

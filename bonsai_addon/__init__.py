@@ -20,8 +20,11 @@ _PENDING = None
 class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
     bl_idname = "materialsdb.apply_push"
     bl_label = "materialsdb apply push"
-    bl_description = "Apply a pushed materialsdb payload to the open IFC model (undoable)"
-    bl_options: typing.ClassVar[set[str]] = {"REGISTER", "UNDO"}
+    bl_description = "Apply a pushed materialsdb payload to the open IFC model"
+    # No UNDO flag: the WM does not push a titled step for operators invoked
+    # from a timer, so the mutations would fold into a neighboring undo step.
+    # The timer pushes an explicit, titled ed.undo_push instead.
+    bl_options: typing.ClassVar[set[str]] = {"REGISTER"}
 
     def _execute(self, context):
         global _PENDING
@@ -49,6 +52,15 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
 
 def _model_path():
     return str(tool.Ifc.get_path() or "")
+
+
+def _undo_label(payload):
+    action = payload.get("action")
+    if action == "add_construction":
+        return f"materialsdb: add construction '{payload['construction'].get('name', '')}'"
+    if action == "add_materials":
+        return f"materialsdb: add {len(payload.get('materials') or [])} material(s)"
+    return "materialsdb: apply push"
 
 
 def _link_pushed_types(file, construction):
@@ -85,6 +97,13 @@ def _poll_timer():
             except Exception as err:  # noqa: BLE001 - report; never kill the poll loop
                 try:
                     _CLIENT.report("error", str(err))
+                except Exception:  # noqa: BLE001, S110
+                    pass
+            else:
+                # titled, isolated undo step (the WM pushes none for
+                # timer-invoked operators); bookkeeping is best-effort
+                try:
+                    bpy.ops.ed.undo_push(message=_undo_label(payload))
                 except Exception:  # noqa: BLE001, S110
                     pass
     except Exception as err:  # noqa: BLE001 - a failed push must not kill the timer
