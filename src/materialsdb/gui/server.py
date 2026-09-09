@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from materialsdb import config, utils
+from materialsdb.construction import finite_or_none
 from materialsdb.ifc.material_builder import add_material
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -35,6 +36,8 @@ class GuiState:
         self.file = None
         # client_id -> {"model_path": str, "last_seen": float, "pending": dict | None, "last_status": dict | None}
         self.listeners = {}
+        # constructions pushed from a model (newest first, capped at 20)
+        self.incoming = []
 
     def resolve_store(self):
         if self.store is not None:
@@ -221,6 +224,55 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         ]
         self._send(200, {"clients": clients})
 
+    def _composer_push(self, payload):
+        name = str(payload.get("name") or "").strip()
+        layers = payload.get("layers")
+        if not name:
+            self._send(400, {"error": "name required"})
+            return
+        if not isinstance(layers, list) or not layers:
+            self._send(400, {"error": "at least one layer required"})
+            return
+        checked = []
+        for index, entry in enumerate(layers):
+            if not isinstance(entry, dict):
+                self._send(400, {"error": f"layer {index}: invalid entry"})
+                return
+            thickness = finite_or_none(entry.get("thickness_m"))
+            if thickness is None or thickness < 0:
+                self._send(400, {"error": f"layer {index}: thickness must be >= 0"})
+                return
+            layer = {"material_id": entry.get("material_id") or None, "thickness_m": thickness}
+            placeholder = entry.get("placeholder")
+            if placeholder is not None:
+                layer["placeholder"] = {
+                    "name": str(placeholder.get("name") or ""),
+                    "lambda_value": finite_or_none(placeholder.get("lambda_value")),
+                }
+            checked.append(layer)
+        self.state.incoming.insert(
+            0,
+            {
+                "name": name,
+                "design_usage": payload.get("design_usage") or None,
+                "layers": checked,
+            },
+        )
+        del self.state.incoming[20:]
+        self._send(200, {"ok": True, "count": len(self.state.incoming)})
+
+    def _composer_consume(self, payload):
+        try:
+            index = int(payload.get("index"))
+        except (TypeError, ValueError):
+            self._send(400, {"error": "index required"})
+            return
+        if index < 0 or index >= len(self.state.incoming):
+            self._send(404, {"error": f"no incoming at index {index}"})
+            return
+        item = self.state.incoming.pop(index)
+        self._send(200, {"construction": item})
+
     def do_GET(self):
         parsed = urlparse(self.path)
         store_ = self.state.resolve_store()
@@ -328,6 +380,9 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 return
             self._listener_clients()
             return
+        if parsed.path == "/api/composer/incoming":
+            self._send(200, {"incoming": self.state.incoming})
+            return
         if parsed.path.startswith("/api/constructions/"):
             from materialsdb import construction as cm
 
@@ -430,6 +485,10 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._export_construction(store_, payload)
             elif parsed.path == "/api/append-construction":
                 self._append_construction(store_, payload)
+            elif parsed.path == "/api/composer/push":
+                self._composer_push(payload)
+            elif parsed.path == "/api/composer/incoming/consume":
+                self._composer_consume(payload)
             elif parsed.path.startswith("/api/constructions/"):
                 self._construction_save(store_, parsed, payload)
             elif parsed.path == "/api/listener/register":

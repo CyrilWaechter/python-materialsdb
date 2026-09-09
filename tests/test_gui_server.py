@@ -742,3 +742,76 @@ def test_discovery_write_and_remove(tmp_path, monkeypatch):
     discovery.remove_listener_info()
     assert not path.exists()
     discovery.remove_listener_info()  # idempotent
+
+
+def test_composer_push_list_consume(api):
+    server, state = api
+    body = {
+        "name": "Mur 20+16",
+        "design_usage": "consDesignForWall",
+        "layers": [
+            {"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.2},
+            {"material_id": None, "thickness_m": 0.18, "placeholder": {"name": "Brique", "lambda_value": 0.21}},
+        ],
+    }
+    status, _ = request(server, "POST", "/api/composer/push", payload=body, token=state.token)
+    assert status == 200
+
+    status, listed = request(server, "GET", "/api/composer/incoming", token=state.token)
+    assert status == 200
+    assert listed["incoming"][0]["name"] == "Mur 20+16"
+    assert listed["incoming"][0]["layers"][1]["placeholder"] == {"name": "Brique", "lambda_value": 0.21}
+
+    status, consumed = request(
+        server, "POST", "/api/composer/incoming/consume", payload={"index": 0}, token=state.token
+    )
+    assert status == 200
+    assert consumed["construction"]["name"] == "Mur 20+16"
+    assert request(server, "GET", "/api/composer/incoming", token=state.token)[1]["incoming"] == []
+
+
+def test_composer_push_validation(api):
+    server, state = api
+    status, body = request(server, "POST", "/api/composer/push", payload={"name": "", "layers": []}, token=state.token)
+    assert status == 400
+    assert "name required" in body["error"]
+    status, body = request(server, "POST", "/api/composer/push", payload={"name": "x", "layers": []}, token=state.token)
+    assert status == 400
+    assert "at least one layer required" in body["error"]
+    status, body = request(
+        server,
+        "POST",
+        "/api/composer/push",
+        payload={"name": "x", "layers": [{"material_id": None, "thickness_m": -1}]},
+        token=state.token,
+    )
+    assert status == 400
+    assert "thickness must be >= 0" in body["error"]
+
+
+def test_composer_consume_bad_index(api):
+    server, state = api
+    status, body = request(server, "POST", "/api/composer/incoming/consume", payload={"index": 3}, token=state.token)
+    assert status == 404
+    assert "no incoming at index 3" in body["error"]
+
+
+def test_composer_incoming_capped_at_20(api):
+    server, state = api
+    for index in range(22):
+        status, _ = request(
+            server,
+            "POST",
+            "/api/composer/push",
+            payload={
+                "name": f"c{index}",
+                "layers": [
+                    {"material_id": None, "thickness_m": 0.1, "placeholder": {"name": "", "lambda_value": None}}
+                ],
+            },
+            token=state.token,
+        )
+        assert status == 200
+    status, listed = request(server, "GET", "/api/composer/incoming", token=state.token)
+    assert len(listed["incoming"]) == 20
+    assert listed["incoming"][0]["name"] == "c21"  # newest first
