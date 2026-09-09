@@ -157,6 +157,10 @@ def _kill_server():
     global _SERVER_PROC
     if _SERVER_PROC is not None:
         _SERVER_PROC.terminate()
+        try:
+            _SERVER_PROC.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _SERVER_PROC.kill()
         _SERVER_PROC = None
 
 
@@ -215,7 +219,10 @@ class MATERIALSDB_OT_start_server(bpy.types.Operator):
                 break
             time.sleep(0.2)
         if url is None:
-            self.report({"ERROR"}, "server did not start — check Blender console for its output")
+            self.report(
+                {"ERROR"},
+                f"server did not start — run '{python} -m materialsdb.gui' in a terminal to see the error",
+            )
             _kill_server()
             return {"CANCELLED"}
         webbrowser.open(url)
