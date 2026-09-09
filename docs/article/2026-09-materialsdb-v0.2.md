@@ -1,4 +1,4 @@
-# python-materialsdb 0.2 — from a materials library to a materials workflow
+# python-materialsdb 0.2
 
 It has been five years since my [last article on this library](https://pythoncvc.net/?p=909).
 Back then it was an alpha: a thin wrapper to convert materialsdb.org data
@@ -7,18 +7,6 @@ materials workflow: an indexed catalogue, a web GUI to browse and compose
 constructions, and a two-way integration with Bonsai (the BlenderBIM
 add-on) — shipped as a Blender extension you can install and update like any
 other.
-
-# What's materialsdb.org ?
-
-In short it is an open standard to store material data. More details on
-[official website](http://www.materialsdb.org). I have used it throughout my
-career for thermal analysis through [Lesosai](https://lesosai.com/). It can
-store thermal conductivity, thermal capacity etc… but also data for other
-trades like structural analysis, acoustic analysis, life cycle analysis, fire
-behaviour. Names and descriptions can be stored in multiple languages.
-Materials data can be stored for a specific country if materials vary from one
-country to another. These materials data are directly updated by manufacturers
-themselves.
 
 # What's new ?
 
@@ -83,8 +71,6 @@ you, open the picker in your browser, and receive whatever you send:
   materialsdb object are kept as "model material" placeholders — and push it
   back into the *same* layer set. Ctrl+Z rewinds it with a titled undo step.
 
-![roundtrip](IMAGE_ROUNDTRIP.png)
-
 Everything talks over a small localhost HTTP API, so FreeCAD, Revit or
 whatever-you-use listeners can reuse the exact same channel later.
 
@@ -101,9 +87,6 @@ the [README](https://github.com/CyrilWaechter/python-materialsdb).
 
 # What's next ?
 
-- **Importing materials from a text table** (a recurring question around
-  here) — the catalogue flows are there, a table importer is the natural
-  next step.
 - **Local/project materials file**: promote the "model material" placeholders
   into a project-specific materialsdb file, so foreign materials can live
   across projects and still compute U-values.
