@@ -32,7 +32,7 @@ function fmt(range, digits = 3) {
 
 function thicknessCellHtml(layer, index) {
   const mm = Math.round(layer.thickness_m * 1000 * 1000) / 1000;
-  const choices = layer.choices_mm || [];
+  const choices = layer.material_id ? layer.choices_mm || [] : [];
   let control;
   if (choices.length > 1) {
     const options = choices.map((c) =>
@@ -98,7 +98,7 @@ function renderPreview() {
   const rseKnown = lastResult ? lastResult.rse : null;
   inner += layers.map((layer, index) => {
     const flex = total ? (layer.thickness_m / total) * 100 : 0;
-    const name = layer.display_name || layer.material_id.slice(0, 8);
+    const name = layer.display_name || (layer.material_id ? layer.material_id.slice(0, 8) : (layer.placeholder?.name || "(model material)"));
     const bg = (typeof PickerCore !== "undefined"
       ? PickerCore.categoryColorStyle(layer.category || "Others", layer.ownColor)
       : "#eef");
@@ -133,10 +133,14 @@ function renderLayers() {
     const catColor = typeof PickerCore !== "undefined"
       ? PickerCore.categoryColorStyle(layer.category || "Others", layer.ownColor)
       : "#fff";
+    const isPlaceholder = !layer.material_id && layer.placeholder;
+    const nameCell = isPlaceholder
+      ? `${esc(layer.placeholder.name || "(model material)")} <span style="color:#888;font-size:.8rem">model material</span>`
+      : esc(layer.display_name || layer.material_id);
     return `<tr data-index="${index}"${selectedAttr} style="cursor:pointer;border-left:4px solid ${catColor}">` +
-      `<td>${index + 1}</td><td data-role="name">${esc(layer.display_name || layer.material_id)}</td>` +
+      `<td>${index + 1}</td><td data-role="name">${nameCell}</td>` +
       `<td>${thicknessCellHtml(layer, index)}</td>` +
-      `<td data-role="lambda">${esc(layer.lambda_value ?? "")}</td><td data-role="r">${esc(fmtR(layer))}</td><td></td></tr>`;
+      `<td data-role="lambda">${esc(layer.lambda_value ?? (isPlaceholder ? layer.placeholder.lambda_value ?? "" : ""))}</td><td data-role="r">${esc(fmtR(layer))}</td><td></td></tr>`;
   }).join("");
   tbody.innerHTML = rsBoundaryRow("exterior") + rows + rsBoundaryRow("interior");
   bindThicknessControls();
@@ -180,7 +184,7 @@ function renderContributions() {
     $("warnings").textContent = lastResult.missing_lambda_ids.length ? `warning: ${lastResult.missing_lambda_ids.length} layer(s) without lambda excluded` : "";
   }
   $("contributions").innerHTML = (lastResult ? lastResult.contributions : []).map((c) =>
-    `<dt>${esc(c.name || c.material_id.slice(0, 8))} \u2014 ${c.d_m.toFixed(3)} m</dt><dd>R = ${c.r.toFixed(3)}</dd>`).join("");
+    `<dt>${esc(c.name || (c.material_id ? c.material_id.slice(0, 8) : "(model material)"))} \u2014 ${c.d_m.toFixed(3)} m</dt><dd>R = ${c.r.toFixed(3)}</dd>`).join("");
 }
 
 async function refreshU() {
@@ -189,7 +193,11 @@ async function refreshU() {
     construction: {
       name: $("name").value || "draft",
       design_usage: $("design-usage").value || null,
-      layers: layers.map((l) => ({ material_id: l.material_id, thickness_m: l.thickness_m })),
+      layers: layers.map((l) => ({
+        material_id: l.material_id,
+        thickness_m: l.thickness_m,
+        ...(l.placeholder ? { placeholder: { name: l.placeholder.name, lambda_value: l.placeholder.lambda_value } } : {}),
+      })),
     },
     preset: $("preset").value,
   };
@@ -241,6 +249,35 @@ async function loadList() {
   }));
   await loadMaterialsdbConstructions();
 }
+
+let incoming = [];
+
+async function refreshIncoming() {
+  try {
+    incoming = (await api("/api/composer/incoming")).incoming;
+  } catch {
+    incoming = [];
+  }
+  const box = $("incoming-list");
+  box.innerHTML = incoming.length
+    ? incoming.map((construction, index) =>
+        `<li><a href="#" data-index="${index}">${esc(construction.name)}</a> ` +
+        `<span style="color:#888">· ${construction.layers.length} layer(s)` +
+        `${construction.layers.some((l) => l.placeholder) ? " · has model materials" : ""}</span></li>`).join("")
+    : `<li style="color:#777;font-size:.8rem">nothing incoming from the model</li>`;
+  box.querySelectorAll("a").forEach((a) => a.addEventListener("click", async (event) => {
+    event.preventDefault();
+    const result = await api("/api/composer/incoming/consume", {
+      method: "POST",
+      body: JSON.stringify({ index: Number(a.dataset.index) }),
+    });
+    loadEditable(result.construction);
+    setStatus(`editing copy of ${result.construction.name} — save to keep, send to: to push back`);
+    refreshIncoming();
+  }));
+}
+setInterval(refreshIncoming, 2000);
+refreshIncoming();
 
 let materialsdbConstructions = [];
 
@@ -363,7 +400,9 @@ function loadEditable(construction) {
 }
 
 async function layerChoicesInitAll() {
-  await Promise.all(layers.map(async (layer) => { Object.assign(layer, await fetchLayerChoices(layer.material_id)); }));
+  await Promise.all(layers.map(async (layer) => {
+    if (layer.material_id) Object.assign(layer, await fetchLayerChoices(layer.material_id));
+  }));
   await refreshU();
 }
 
@@ -431,7 +470,11 @@ $("save").onclick = async () => {
   if (!layers.length) return setStatus("add at least one layer");
   await api(`/api/constructions/${encodeURIComponent(name)}`, { method: "POST",
     body: JSON.stringify({ name, design_usage: $("design-usage").value || null,
-      layers: layers.map((l) => ({ material_id: l.material_id, thickness_m: l.thickness_m })) }) });
+      layers: layers.map((l) => ({
+        material_id: l.material_id,
+        thickness_m: l.thickness_m,
+        ...(l.placeholder ? { placeholder: { name: l.placeholder.name, lambda_value: l.placeholder.lambda_value } } : {}),
+      })) }) });
   setStatus(`saved ${name} (overwrites same-name construction)`); loadList();
 };
 
@@ -450,7 +493,11 @@ $("send-bonsai").onclick = async () => {
       construction: {
         name: $("name").value.trim(),
         design_usage: $("design-usage").value || null,
-        layers: layers.map((l) => ({ material_id: l.material_id, thickness_m: l.thickness_m })),
+        layers: layers.map((l) => ({
+          material_id: l.material_id,
+          thickness_m: l.thickness_m,
+          ...(l.placeholder ? { placeholder: { name: l.placeholder.name, lambda_value: l.placeholder.lambda_value } } : {}),
+        })),
       },
     }),
   });

@@ -94,7 +94,7 @@ globalThis.Response = Response;
 // ---- load the real frontend ----
 const src = fs.readFileSync(process.argv[2], "utf-8");
 const sandbox = { window: globalThis.window, document: globalThis.document, fetch: fakeFetch, Response,
-                  console, setTimeout, clearTimeout, Math, JSON, Promise, Number, String, Object, Array,
+                  console, setTimeout, clearTimeout, setInterval: () => 0, Math, JSON, Promise, Number, String, Object, Array,
                   PickerCore: {
                     esc: (v) => String(v ?? ""),
                     categoryColorStyle: () => "#fff",
