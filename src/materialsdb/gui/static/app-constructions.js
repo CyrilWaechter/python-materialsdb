@@ -140,7 +140,7 @@ function renderLayers() {
     return `<tr data-index="${index}"${selectedAttr} style="cursor:pointer;border-left:4px solid ${catColor}">` +
       `<td>${index + 1}</td><td data-role="name">${nameCell}</td>` +
       `<td>${thicknessCellHtml(layer, index)}</td>` +
-      `<td data-role="lambda">${esc(layer.lambda_value ?? (isPlaceholder ? layer.placeholder.lambda_value ?? "" : ""))}</td><td data-role="r">${esc(fmtR(layer))}</td><td></td></tr>`;
+      `<td data-role="lambda">${esc(layer.lambda_value ?? (isPlaceholder ? layer.placeholder.lambda_value ?? "" : ""))}</td><td data-role="r">${esc(fmtR(layer, index))}</td><td></td></tr>`;
   }).join("");
   tbody.innerHTML = rsBoundaryRow("exterior") + rows + rsBoundaryRow("interior");
   bindThicknessControls();
@@ -169,8 +169,10 @@ const RESISTANCE_DISPLAY = {
   SIA180: { rsi: 0.13, rse: 0.04 },
 };
 
-function fmtR(layer) {
-  const c = lastResult && lastResult.contributions.find((x) => x.material_id === layer.material_id);
+function fmtR(layer, index) {
+  if (!lastResult) return "";
+  const c = lastResult.contributions.find((x) =>
+    x.layer_index != null ? x.layer_index === index : x.material_id === layer.material_id);
   return c ? c.r.toFixed(3) : "";
 }
 
@@ -205,7 +207,12 @@ async function refreshU() {
   try {
     lastResult = await api("/api/u_value", { method: "POST", body: JSON.stringify(body) });
     lastResult.contributions.forEach((c) => {
-      layers.filter((l) => l.material_id === c.material_id).forEach((row) => {
+      // contributions carry their original layer position; placeholder rows all
+      // share material_id null, so index matching is the only safe hydration
+      const rows = c.layer_index != null
+        ? [layers[c.layer_index]].filter(Boolean)
+        : layers.filter((l) => l.material_id === c.material_id);
+      rows.forEach((row) => {
         row.display_name = c.name || row.display_name;
         row.lambda_value = c.lambda_value;
       });
@@ -401,7 +408,12 @@ function loadEditable(construction) {
 
 async function layerChoicesInitAll() {
   await Promise.all(layers.map(async (layer) => {
-    if (layer.material_id) Object.assign(layer, await fetchLayerChoices(layer.material_id));
+    if (!layer.material_id) return;
+    try {
+      Object.assign(layer, await fetchLayerChoices(layer.material_id));
+    } catch {
+      /* choices optional; id may be absent from the local store */
+    }
   }));
   await refreshU();
 }
@@ -504,22 +516,38 @@ $("send-bonsai").onclick = async () => {
   PickerCore.flash(setStatus, () => $("status").textContent, `sent to ${bonsaiTarget.label() || "?"}: ${result.summary}`);
 };
 $("export-ifc").onclick = async () => {
-  const name = $("name").value.trim(); if (!name || !layers.length) return setStatus("nothing to export");
-  const blob = await api("/api/export-construction", { method: "POST",
-    body: JSON.stringify({ construction: { name, design_usage: $("design-usage").value || null,
-      layers: layers.map((l) => ({ material_id: l.material_id, thickness_m: l.thickness_m })) } }) });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a"); link.href = url; link.download = `${name}.ifc`; link.click();
-  URL.revokeObjectURL(url);
+  try {
+    const name = $("name").value.trim(); if (!name || !layers.length) return setStatus("nothing to export");
+    const blob = await api("/api/export-construction", { method: "POST",
+      body: JSON.stringify({ construction: { name, design_usage: $("design-usage").value || null,
+        layers: layers.map((l) => ({
+          material_id: l.material_id,
+          thickness_m: l.thickness_m,
+          ...(l.placeholder ? { placeholder: { name: l.placeholder.name, lambda_value: l.placeholder.lambda_value } } : {}),
+        })) } }) });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a"); link.href = url; link.download = `${name}.ifc`; link.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    setStatus(err.message);
+  }
 };
 $("append-session").onclick = async () => {
-  if (!$("name").value || !layers.length) return setStatus("nothing to append");
-  const result = await api("/api/append-construction", { method: "POST",
-    body: JSON.stringify({ construction: { name: $("name").value,
-      design_usage: $("design-usage").value || null,
-      layers: layers.map((l) => ({ material_id: l.material_id, thickness_m: l.thickness_m })) } }),
-    });
-  setStatus(`appended layer set (${result.layer_count} layers)`);
+  try {
+    if (!$("name").value || !layers.length) return setStatus("nothing to append");
+    const result = await api("/api/append-construction", { method: "POST",
+      body: JSON.stringify({ construction: { name: $("name").value,
+        design_usage: $("design-usage").value || null,
+        layers: layers.map((l) => ({
+          material_id: l.material_id,
+          thickness_m: l.thickness_m,
+          ...(l.placeholder ? { placeholder: { name: l.placeholder.name, lambda_value: l.placeholder.lambda_value } } : {}),
+        })) } }),
+      });
+    setStatus(`appended layer set (${result.layer_count} layers)`);
+  } catch (err) {
+    setStatus(err.message);
+  }
 };
 initConfig().then(() => loadList().then(() => { renderLayers(); renderContributions(); renderPreview(); }));
 document.getElementById("lang")?.addEventListener("change", async () => {

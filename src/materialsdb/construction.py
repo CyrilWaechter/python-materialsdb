@@ -96,7 +96,7 @@ def u_value(construction: Construction, store_, preset: str = "ISO6946") -> URes
     contributions = []
     missing = []
     r_sum = 0.0
-    for layer in construction.layers:
+    for index, layer in enumerate(construction.layers):
         if layer.placeholder is not None:
             name = layer.placeholder.get("name") or ""
             lambda_value = finite_or_none(layer.placeholder.get("lambda_value"))
@@ -105,7 +105,7 @@ def u_value(construction: Construction, store_, preset: str = "ISO6946") -> URes
             if summary is not None:
                 name = summary.names.get(config.get_lang()) or summary.names.get("") or ""
             lambda_value = resolve_lambda(store_, layer.material_id, country)
-        if lambda_value is None or not layer.thickness_m or layer.thickness_m <= 0:
+        if lambda_value is None or lambda_value <= 0 or not layer.thickness_m or layer.thickness_m <= 0:
             missing.append(layer.material_id)
             continue
         r_layer = layer.thickness_m / lambda_value
@@ -117,6 +117,7 @@ def u_value(construction: Construction, store_, preset: str = "ISO6946") -> URes
                 "d_m": layer.thickness_m,
                 "lambda_value": lambda_value,
                 "r": r_layer,
+                "layer_index": index,
             }
         )
 

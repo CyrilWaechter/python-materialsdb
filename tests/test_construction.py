@@ -283,6 +283,41 @@ def test_u_value_uses_placeholder_lambda(store):
     assert contributions[1]["name"] == "Brique terrecuite"
     assert contributions[1]["lambda_value"] == 0.21
     assert result.missing_lambda_ids == []
+    # contributions carry their ORIGINAL layer position (placeholder-safe hydration)
+    assert [c["layer_index"] for c in contributions] == [0, 1]
+
+
+def test_u_value_contributions_index_original_layer_positions(store, mixed_xml):
+    # combined refresh: passing a SUBSET would delete previously indexed rows
+    store.refresh(paths=[_MINI_XML_PATH, mixed_xml])
+    construction = Construction(
+        name="indexed wall",
+        design_usage="consDesignForWall",
+        layers=[
+            ConstructionLayer("00000000-0000-0000-0000-000000000002", thickness_m=0.1),  # Beton B lambda .21
+            ConstructionLayer("00000000-0000-0000-0000-000000000004", thickness_m=0.3),  # btk: no lambda -> skipped
+            ConstructionLayer(None, thickness_m=0.18, placeholder={"name": "Brique", "lambda_value": 0.21}),
+        ],
+    )
+
+    result = u_value(construction, store)
+
+    # skipped middle layer: indices reflect ORIGINAL positions, not list positions
+    assert [c["layer_index"] for c in result.contributions] == [0, 2]
+    assert result.missing_lambda_ids == ["00000000-0000-0000-0000-000000000004"]
+    assert result.contributions[0]["material_id"] == "00000000-0000-0000-0000-000000000002"
+    assert result.contributions[1]["name"] == "Brique"
+
+
+def test_u_value_flags_placeholder_with_zero_lambda(store):
+    construction = _placeholder_construction()
+    construction.layers[1].placeholder = {"name": "Zero", "lambda_value": 0.0}
+
+    result = u_value(construction, store)
+
+    assert result.u is None
+    assert result.missing_lambda_ids == [None]
+    assert [c["layer_index"] for c in result.contributions] == [0]
 
 
 def test_u_value_flags_placeholder_without_lambda(store):

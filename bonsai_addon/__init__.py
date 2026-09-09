@@ -159,6 +159,9 @@ class MATERIALSDB_OT_send_construction(bpy.types.Operator):
             return {"CANCELLED"}
         try:
             ListenerClient().send_to_composer(construction)
+        except RuntimeError as err:
+            self.report({"ERROR"}, str(err))
+            return {"CANCELLED"}
         except Exception as err:  # noqa: BLE001 - surface, never crash Blender
             self.report({"ERROR"}, f"materialsdb-gui not reachable: {err}")
             return {"CANCELLED"}

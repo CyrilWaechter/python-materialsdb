@@ -789,6 +789,19 @@ def test_composer_push_validation(api):
     assert "thickness must be >= 0" in body["error"]
 
 
+def test_composer_push_rejects_non_dict_placeholder(api):
+    server, state = api
+    status, body = request(
+        server,
+        "POST",
+        "/api/composer/push",
+        payload={"name": "x", "layers": [{"material_id": None, "thickness_m": 0.1, "placeholder": "Brique"}]},
+        token=state.token,
+    )
+    assert status == 400
+    assert "invalid placeholder" in body["error"]
+
+
 def test_composer_consume_bad_index(api):
     server, state = api
     status, body = request(server, "POST", "/api/composer/incoming/consume", payload={"index": 3}, token=state.token)

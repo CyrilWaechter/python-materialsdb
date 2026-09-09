@@ -244,6 +244,9 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 return
             layer = {"material_id": entry.get("material_id") or None, "thickness_m": thickness}
             placeholder = entry.get("placeholder")
+            if placeholder is not None and not isinstance(placeholder, dict):
+                self._send(400, {"error": f"layer {index}: invalid placeholder"})
+                return
             if placeholder is not None:
                 layer["placeholder"] = {
                     "name": str(placeholder.get("name") or ""),

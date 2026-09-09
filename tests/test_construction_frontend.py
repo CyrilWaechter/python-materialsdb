@@ -38,3 +38,4 @@ def test_construction_page_add_layer_renders_rows():
     assert "BUG REPRODUCED" not in result.stdout + result.stderr, result.stdout
     assert result.returncode == 0, result.stdout + result.stderr
     assert "data row present: true" in result.stdout
+    assert "badge: true | name: true | no select: true" in result.stdout

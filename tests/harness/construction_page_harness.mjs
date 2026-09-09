@@ -69,12 +69,12 @@ async function fakeFetch(path, options = {}) {
     let rsum = 0;
     const contributions = [];
     const missing = [];
-    for (const l of body.construction.layers) {
+    for (const [i, l] of body.construction.layers.entries()) {
       const d = l.material_id.endsWith("0002") ? DETAIL_002 : DETAIL_001;
       const lambda = d.layers[0].lambda_value;
       const r = l.thickness_m / lambda;
       rsum += r;
-      contributions.push({ material_id: l.material_id, name: d.names.fr, d_m: l.thickness_m, lambda_value: lambda, r });
+      contributions.push({ material_id: l.material_id, name: d.names.fr, d_m: l.thickness_m, lambda_value: lambda, r, layer_index: i });
     }
     return json({ u: 1 / (0.13 + rsum + 0.04), rsi: 0.13, rse: 0.04, contributions, missing_lambda_ids: missing });
   }
@@ -136,6 +136,23 @@ const hasName = tbody.innerHTML.includes("Beton B");
 console.log(`\ndata row present: ${hasDataRow} | name shown: ${hasName}`);
 if (!hasDataRow || !hasName) {
   console.log("BUG REPRODUCED: material rows missing from rendered table");
+  process.exit(1);
+}
+
+// placeholder layer rendering: badge + name, no thickness <select> for the row
+console.log("\n== placeholder layer rendering ==");
+S.__evalInContext(`layers.push({ material_id: null, thickness_m: 0.18, placeholder: { name: "Brique terrecuite", lambda_value: 0.21 } }); renderLayers();`);
+const phTbody = S.__get("layers").innerHTML;
+const phRowHtml = phTbody.split("<tr").find((chunk) => chunk.includes('data-index="1"')) || "";
+const hasBadge = phRowHtml.includes("model material");
+const hasPhName = phRowHtml.includes("Brique terrecuite");
+const hasSelect = phRowHtml.includes("<select");
+console.log("--- rendered placeholder row ---");
+console.log(phRowHtml);
+console.log(`--- end ---`);
+console.log(`badge: ${hasBadge} | name: ${hasPhName} | no select: ${!hasSelect}`);
+if (!hasBadge || !hasPhName || hasSelect) {
+  console.log("BUG REPRODUCED: placeholder row rendered wrong");
   process.exit(1);
 }
 console.log("OK");
