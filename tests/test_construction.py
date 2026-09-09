@@ -219,3 +219,97 @@ def test_parse_legacy_stack_multiple_variants():
     )
     assert [v["header_raw"] for v in result["variants"]] == ["1", "0.4"]
     assert all(len(v["layers"]) == 1 for v in result["variants"])
+
+
+def _placeholder_construction():
+    return Construction(
+        name="Mixed wall",
+        design_usage="consDesignForWall",
+        layers=[
+            ConstructionLayer("00000000-0000-0000-0000-000000000001", thickness_m=0.2),
+            ConstructionLayer(
+                None,
+                thickness_m=0.18,
+                placeholder={"name": "Brique terrecuite", "lambda_value": 0.21},
+            ),
+        ],
+    )
+
+
+def test_validate_accepts_placeholder_layers(store):
+    from materialsdb.construction import validate_construction
+
+    construction, problems = validate_construction(
+        {
+            "name": "Mixed wall",
+            "design_usage": "consDesignForWall",
+            "layers": [
+                {"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.2},
+                {"material_id": None, "thickness_m": 0.18, "placeholder": {"name": "Brique", "lambda_value": 0.21}},
+                {"material_id": None, "thickness_m": 0.1, "placeholder": {"name": "", "lambda_value": None}},
+            ],
+        },
+        store,
+    )
+
+    assert problems == []
+    assert construction.layers[1].placeholder == {"name": "Brique", "lambda_value": 0.21}
+    assert construction.layers[2].placeholder == {"name": "", "lambda_value": None}
+
+
+def test_validate_rejects_layer_without_material_nor_placeholder(store):
+    from materialsdb.construction import validate_construction
+
+    construction, problems = validate_construction(
+        {
+            "name": "x",
+            "layers": [{"material_id": None, "thickness_m": 0.1}],
+        },
+        store,
+    )
+
+    assert construction.layers == []
+    assert any("material_id or placeholder required" in problem for problem in problems)
+
+
+def test_u_value_uses_placeholder_lambda(store):
+    construction = _placeholder_construction()
+
+    result = u_value(construction, store)
+
+    assert result.u is not None
+    contributions = result.contributions
+    assert contributions[0]["material_id"] == "00000000-0000-0000-0000-000000000001"
+    assert contributions[1]["name"] == "Brique terrecuite"
+    assert contributions[1]["lambda_value"] == 0.21
+    assert result.missing_lambda_ids == []
+
+
+def test_u_value_flags_placeholder_without_lambda(store):
+    construction = _placeholder_construction()
+    construction.layers[1].placeholder = {"name": "Mystere", "lambda_value": None}
+
+    result = u_value(construction, store)
+
+    assert result.u is None
+    assert result.missing_lambda_ids == [None]
+
+
+def test_save_load_roundtrips_placeholders(store, tmp_path):
+    from materialsdb.construction import load_construction, save_construction
+
+    save_construction(_placeholder_construction(), store)
+
+    loaded = load_construction("Mixed wall", store)
+    assert loaded is not None
+    assert loaded.layers[1].material_id is None
+    assert loaded.layers[1].placeholder == {"name": "Brique terrecuite", "lambda_value": 0.21}
+
+
+def test_to_ifc_layer_set_rejects_placeholders(store):
+    import pytest
+
+    from materialsdb.construction import to_ifc_layer_set
+
+    with pytest.raises(ValueError, match="cannot export placeholder layers"):
+        to_ifc_layer_set(_placeholder_construction(), store)

@@ -9,6 +9,15 @@ from pathlib import Path
 
 from materialsdb import cache, config, utils
 
+
+def finite_or_none(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 # Surface resistances (m2K/W): interior/exterior by heat-flow direction.
 # ISO 6946 table values; SIA 180 references the same table for these boundary
 # cases (verified against secondary literature 2026-08). Kept as separate
@@ -37,8 +46,11 @@ _DESIGN_USAGE_TO_DIRECTION = {
 
 @dataclass
 class ConstructionLayer:
-    material_id: str
+    material_id: str | None
     thickness_m: float
+    # {"name": str, "lambda_value": float | None} for model materials without
+    # a materialsdb identity (round-tripped from Bonsai, re-attached by name)
+    placeholder: dict | None = None
 
 
 @dataclass
@@ -54,10 +66,10 @@ class UResult:
     rsi: float
     rse: float
     contributions: list[dict]
-    missing_lambda_ids: list[str]
+    missing_lambda_ids: list[str | None]
 
 
-def resolve_lambda(store_, material_id: str, country: str | None = None) -> float | None:
+def resolve_lambda(store_, material_id: str | None, country: str | None = None) -> float | None:
     """First country-resolved lambda_value across the material's layers."""
     material = store_.get(material_id)
     if material is None:
@@ -85,11 +97,14 @@ def u_value(construction: Construction, store_, preset: str = "ISO6946") -> URes
     missing = []
     r_sum = 0.0
     for layer in construction.layers:
-        name = ""
-        summary = store_.get_summary(layer.material_id)
-        if summary is not None:
-            name = summary.names.get(config.get_lang()) or summary.names.get("") or ""
-        lambda_value = resolve_lambda(store_, layer.material_id, country)
+        if layer.placeholder is not None:
+            name = layer.placeholder.get("name") or ""
+            lambda_value = finite_or_none(layer.placeholder.get("lambda_value"))
+        else:
+            summary = store_.get_summary(layer.material_id)
+            if summary is not None:
+                name = summary.names.get(config.get_lang()) or summary.names.get("") or ""
+            lambda_value = resolve_lambda(store_, layer.material_id, country)
         if lambda_value is None or not layer.thickness_m or layer.thickness_m <= 0:
             missing.append(layer.material_id)
             continue
@@ -156,6 +171,8 @@ def to_ifc_layer_set(construction: Construction, store_, file=None):
 
     Appending into an existing session file replaces any prior layer set with
     the same name (materials matched by their materialsdb identity)."""
+    if any(layer.placeholder is not None for layer in construction.layers):
+        raise ValueError("cannot export placeholder layers; assign materialsdb materials first")
     import uuid
 
     from materialsdb.ifc.material_builder import MaterialBuilder
@@ -163,7 +180,7 @@ def to_ifc_layer_set(construction: Construction, store_, file=None):
 
     missing = [layer.material_id for layer in construction.layers if store_.get(layer.material_id) is None]
     if missing:
-        raise ValueError(f"unknown material ids: {', '.join(missing)}")
+        raise ValueError(f"unknown material ids: {', '.join(str(m) for m in missing)}")
 
     if file is None:
         library = ProjectLibrary()
@@ -254,7 +271,6 @@ def validate_construction(body: dict, store_) -> tuple[Construction, list[str]]:
         if not isinstance(entry, dict):
             problems.append(f"layer {index}: invalid entry")
             continue
-        material_id = str(entry.get("material_id") or "")
         try:
             thickness = float(entry.get("thickness_m"))
         except (TypeError, ValueError):
@@ -263,10 +279,26 @@ def validate_construction(body: dict, store_) -> tuple[Construction, list[str]]:
         if not math.isfinite(thickness) or thickness <= 0:
             problems.append(f"layer {index}: thickness must be > 0")
             continue
-        if store_.get(material_id) is None:
-            problems.append(f"unknown material id: {material_id}")
-            continue
-        layers.append(ConstructionLayer(material_id=material_id, thickness_m=thickness))
+        material_id = entry.get("material_id")
+        placeholder = entry.get("placeholder") if isinstance(entry.get("placeholder"), dict) else None
+        if material_id:
+            if store_.get(str(material_id)) is None:
+                problems.append(f"unknown material id: {material_id}")
+                continue
+            layers.append(ConstructionLayer(material_id=str(material_id), thickness_m=thickness))
+        elif placeholder is not None:
+            layers.append(
+                ConstructionLayer(
+                    material_id=None,
+                    thickness_m=thickness,
+                    placeholder={
+                        "name": str(placeholder.get("name") or ""),
+                        "lambda_value": finite_or_none(placeholder.get("lambda_value")),
+                    },
+                )
+            )
+        else:
+            problems.append(f"layer {index}: material_id or placeholder required")
     design_usage = body.get("design_usage") or None
     if design_usage not in (None, *_DESIGN_USAGE_TO_DIRECTION):
         problems.append(f"invalid design_usage: {design_usage}")
@@ -278,7 +310,12 @@ def _to_body(construction: Construction) -> dict:
         "name": construction.name,
         "design_usage": construction.design_usage,
         "layers": [
-            {"material_id": layer.material_id, "thickness_m": layer.thickness_m} for layer in construction.layers
+            {
+                "material_id": layer.material_id,
+                "thickness_m": layer.thickness_m,
+                **({"placeholder": layer.placeholder} if layer.placeholder else {}),
+            }
+            for layer in construction.layers
         ],
     }
 
@@ -295,7 +332,12 @@ def save_construction(construction: Construction, store_) -> Path:
         "name": construction.name,
         "design_usage": construction.design_usage,
         "layers": [
-            {"material_id": layer.material_id, "thickness_m": layer.thickness_m} for layer in construction.layers
+            {
+                "material_id": layer.material_id,
+                "thickness_m": layer.thickness_m,
+                **({"placeholder": layer.placeholder} if layer.placeholder else {}),
+            }
+            for layer in construction.layers
         ],
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
@@ -314,10 +356,23 @@ def load_construction(name_or_slug: str, store_) -> Construction | None:
     for file in candidates:
         if file.exists():
             data = json.loads(file.read_text(encoding="utf-8"))
-            layers = [
-                ConstructionLayer(material_id=l["material_id"], thickness_m=float(l["thickness_m"]))
-                for l in data.get("layers", [])
-            ]
+            layers = []
+            for entry in data.get("layers", []):
+                placeholder = entry.get("placeholder") if isinstance(entry.get("placeholder"), dict) else None
+                layers.append(
+                    ConstructionLayer(
+                        material_id=entry.get("material_id"),
+                        thickness_m=float(entry["thickness_m"]),
+                        placeholder=(
+                            {
+                                "name": str(placeholder.get("name") or ""),
+                                "lambda_value": finite_or_none(placeholder.get("lambda_value")),
+                            }
+                            if placeholder
+                            else None
+                        ),
+                    )
+                )
             return Construction(name=data["name"], design_usage=data.get("design_usage"), layers=layers)
     return None
 
