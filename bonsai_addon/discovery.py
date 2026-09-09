@@ -70,3 +70,14 @@ class ListenerClient:
         self._request(
             "POST", "/api/listener/status", {"client_id": self.client_id, "status": status, "detail": str(detail or "")}
         )
+
+    def send_to_composer(self, construction):
+        self._request(
+            "POST",
+            "/api/composer/push",
+            {
+                "name": construction["name"],
+                "design_usage": construction.get("design_usage"),
+                "layers": construction["layers"],
+            },
+        )

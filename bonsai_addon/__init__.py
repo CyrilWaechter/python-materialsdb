@@ -12,6 +12,7 @@ from bonsai import tool
 
 from . import insert
 from .discovery import ListenerClient
+from .read_construction import ReadError, read_construction_from_element
 
 _CLIENT = None
 _PENDING = None
@@ -139,6 +140,36 @@ class MATERIALSDB_OT_toggle_listener(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class MATERIALSDB_OT_send_construction(bpy.types.Operator):
+    bl_idname = "materialsdb.send_construction"
+    bl_label = "materialsdb send construction"
+    bl_description = "Push the active object's type layer set to the composer (read-only)"
+    bl_options: typing.ClassVar[set[str]] = {"REGISTER"}
+
+    def execute(self, context):
+        obj = context.active_object
+        element = tool.Ifc.get_entity(obj) if obj is not None else None
+        if element is None:
+            self.report({"ERROR"}, "select an IFC element")
+            return {"CANCELLED"}
+        try:
+            construction = read_construction_from_element(element)
+        except ReadError as err:
+            self.report({"ERROR"}, str(err))
+            return {"CANCELLED"}
+        try:
+            ListenerClient().send_to_composer(construction)
+        except Exception as err:  # noqa: BLE001 - surface, never crash Blender
+            self.report({"ERROR"}, f"materialsdb-gui not reachable: {err}")
+            return {"CANCELLED"}
+        placeholders = sum(1 for layer in construction["layers"] if layer["placeholder"])
+        self.report(
+            {"INFO"},
+            f"sent {len(construction['layers'])} layer(s) ({placeholders} model material) to the composer",
+        )
+        return {"FINISHED"}
+
+
 class MATERIALSDB_PT_panel(bpy.types.Panel):
     bl_label = "materialsdb"
     bl_space_type = "VIEW_3D"
@@ -149,12 +180,14 @@ class MATERIALSDB_PT_panel(bpy.types.Panel):
         running = _CLIENT is not None
         layout = self.layout
         layout.operator("materialsdb.toggle_listener", text="Stop listener" if running else "Start listener")
+        layout.operator("materialsdb.send_construction", text="Send type to composer")
         layout.label(text="listening" if running else "stopped", icon="LINKED" if running else "UNLINKED")
 
 
 def register():
     bpy.utils.register_class(MATERIALSDB_OT_toggle_listener)
     bpy.utils.register_class(MATERIALSDB_OT_apply_push)
+    bpy.utils.register_class(MATERIALSDB_OT_send_construction)
     bpy.utils.register_class(MATERIALSDB_PT_panel)
 
 
@@ -166,3 +199,4 @@ def unregister():
     bpy.utils.unregister_class(MATERIALSDB_PT_panel)
     bpy.utils.unregister_class(MATERIALSDB_OT_toggle_listener)
     bpy.utils.unregister_class(MATERIALSDB_OT_apply_push)
+    bpy.utils.unregister_class(MATERIALSDB_OT_send_construction)
