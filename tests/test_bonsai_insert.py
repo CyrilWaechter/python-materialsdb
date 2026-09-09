@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bonsai_addon"))
 from insert import (  # ty: ignore[unresolved-import] - add-on module on a side path
     apply_add_construction,
     apply_add_materials,
+    existing_materials_by_id,
 )
 
 
@@ -273,3 +274,13 @@ def test_construction_keeps_non_material_associations():
     assert summary["types_created"] == 0  # same-named type kept
     assert any(a.is_a("IfcRelAssociatesClassification") for a in wall_type.HasAssociations)
     assert any(a.is_a("IfcRelAssociatesMaterial") for a in wall_type.HasAssociations)
+
+
+def test_existing_materials_by_id_reads_via_psets(store):
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_materials(file, _payload(store))
+
+    found = existing_materials_by_id(file)
+
+    assert set(found) == {"00000000-0000-0000-0000-000000000001"}
+    assert found["00000000-0000-0000-0000-000000000001"].Name == "Isolant A"

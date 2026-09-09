@@ -6,48 +6,35 @@ target the 0.9 api (add_layer takes no thickness — edit_layer sets it;
 root.create_entity takes ifc_class=)."""
 
 import ifcopenshell.api
+import ifcopenshell.util.element
 
 
-def _materials_of(pset):
-    materials = pset.Material
-    if not isinstance(materials, (list, tuple)):
-        materials = [materials]
-    return materials
+def _material_id_of(material) -> str | None:
+    return ifcopenshell.util.element.get_psets(material).get("materialsdb", {}).get("material_id")
 
 
-def _pset_props(pset):
-    return {prop.Name: prop.NominalValue.wrappedValue for prop in pset.Properties}
+def _org_layer_id_of(material) -> str | None:
+    return ifcopenshell.util.element.get_psets(material).get("materialsdb.org_layer", {}).get("layer_id")
 
 
 def existing_materials_by_id(file):
     """material_id -> first IfcMaterial carrying a matching materialsdb pset."""
     found = {}
-    for pset in file.by_type("IfcMaterialProperties"):
-        if pset.Name != "materialsdb":
-            continue
-        material_id = _pset_props(pset).get("material_id")
-        for material in _materials_of(pset):
-            found.setdefault(material_id, material)
+    for material in file.by_type("IfcMaterial"):
+        material_id = _material_id_of(material)
+        if material_id is not None and material_id not in found:
+            found[material_id] = material
     return found
 
 
 def _existing_keys(file):
     """(material_id, layer_id | None) pairs already present, from the
     materialsdb identity + org_layer psets."""
-    layer_of = {}
-    for pset in file.by_type("IfcMaterialProperties"):
-        if pset.Name != "materialsdb.org_layer":
-            continue
-        layer_id = _pset_props(pset).get("layer_id")
-        for material in _materials_of(pset):
-            layer_of[material.id()] = layer_id
     keys = set()
-    for pset in file.by_type("IfcMaterialProperties"):
-        if pset.Name != "materialsdb":
-            continue
-        material_id = _pset_props(pset).get("material_id")
-        for material in _materials_of(pset):
-            keys.add((material_id, layer_of.get(material.id())))
+    for material in file.by_type("IfcMaterial"):
+        material_id = _material_id_of(material)
+        if material_id is not None:
+            keys.add((material_id, _org_layer_id_of(material)))
     return keys
 
 
