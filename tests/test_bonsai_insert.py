@@ -19,6 +19,10 @@ from insert import (  # ty: ignore[unresolved-import] - add-on module on a side 
     apply_add_materials,
     existing_materials_by_id,
 )
+from read_construction import (  # ty: ignore[unresolved-import] - add-on module on a side path
+    ReadError,
+    read_construction_from_element,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -348,3 +352,92 @@ def test_construction_placeholder_created_with_thermal_when_absent():
     brique = next(m for m in file.by_type("IfcMaterial") if m.Name == "Brique terrecuite")
     thermal = ifcopenshell.util.element.get_psets(brique).get("Pset_MaterialThermal", {})
     assert thermal.get("ThermalConductivity") == 0.21
+
+
+def _make_type_with_layer_set(file, type_class="IfcWallType", name="Mur 20+16"):
+    type_element = ifcopenshell.api.run("root.create_entity", file, ifc_class=type_class, name=name)
+    layer_set = ifcopenshell.api.run("material.add_material_set", file, name=name, set_type="IfcMaterialLayerSet")
+    ifcopenshell.api.run(
+        "material.assign_material", file, products=[type_element], type="IfcMaterialLayerSet", material=layer_set
+    )
+    return type_element, layer_set
+
+
+def test_read_construction_from_occurrence():
+    file = ifcopenshell.file(schema="IFC4")
+    type_element, layer_set = _make_type_with_layer_set(file)
+    occurrence = ifcopenshell.api.run("root.create_entity", file, ifc_class="IfcWall", name="W")
+    ifcopenshell.api.run("type.assign_type", file, related_objects=[occurrence], relating_type=type_element)
+    resolvable = ifcopenshell.api.run("material.add_material", file, name="Isolant A")
+    identity = ifcopenshell.api.run("pset.add_pset", file, product=resolvable, name="materialsdb")
+    ifcopenshell.api.run(
+        "pset.edit_pset", file, pset=identity, properties={"material_id": "00000000-0000-0000-0000-000000000001"}
+    )
+    foreign = ifcopenshell.api.run("material.add_material", file, name="Brique terrecuite")
+    thermal = ifcopenshell.api.run("pset.add_pset", file, product=foreign, name="Pset_MaterialThermal")
+    ifcopenshell.api.run("pset.edit_pset", file, pset=thermal, properties={"ThermalConductivity": 0.21})
+    ifcopenshell.api.run("material.add_layer", file, layer_set=layer_set, material=resolvable)
+    ifcopenshell.api.run("material.add_layer", file, layer_set=layer_set, material=foreign)
+    layers = layer_set.MaterialLayers
+    ifcopenshell.api.run("material.edit_layer", file, layer=layers[0], attributes={"LayerThickness": 0.2})
+    ifcopenshell.api.run("material.edit_layer", file, layer=layers[1], attributes={"LayerThickness": 0.18})
+
+    construction = read_construction_from_element(occurrence)
+
+    assert construction["name"] == "Mur 20+16"
+    assert construction["design_usage"] == "consDesignForWall"
+    assert construction["layers"][0] == {
+        "material_id": "00000000-0000-0000-0000-000000000001",
+        "thickness_m": 0.2,
+        "placeholder": None,
+    }
+    assert construction["layers"][1] == {
+        "material_id": None,
+        "thickness_m": 0.18,
+        "placeholder": {"name": "Brique terrecuite", "lambda_value": 0.21},
+    }
+
+
+def test_read_construction_from_type_directly():
+    file = ifcopenshell.file(schema="IFC4")
+    type_element, _ = _make_type_with_layer_set(file, type_class="IfcSlabType", name="Dalle")
+
+    construction = read_construction_from_element(type_element)
+
+    assert construction["design_usage"] == "consDesignForFloor"
+
+
+def test_read_construction_errors():
+    import pytest as _pytest
+
+    file = ifcopenshell.file(schema="IFC4")
+    occurrence = ifcopenshell.api.run("root.create_entity", file, ifc_class="IfcWall", name="W")
+
+    with _pytest.raises(ReadError, match="selected element has no type"):
+        read_construction_from_element(occurrence)
+
+    bare_type = ifcopenshell.api.run("root.create_entity", file, ifc_class="IfcWallType", name="Bare")  # no material
+    with _pytest.raises(ReadError, match="type has no material"):
+        read_construction_from_element(bare_type)
+
+    type_element2, _ = _make_type_with_layer_set(file, name="T2")
+    plain = ifcopenshell.api.run("material.add_material", file, name="M")
+    ifcopenshell.api.run("material.assign_material", file, products=[type_element2], type="IfcMaterial", material=plain)
+    with _pytest.raises(ReadError, match="material is not an IfcMaterialLayerSet: IfcMaterial"):
+        read_construction_from_element(type_element2)
+
+
+def test_read_construction_materialless_layer_becomes_placeholder():
+    file = ifcopenshell.file(schema="IFC4")
+    type_element, layer_set = _make_type_with_layer_set(file)
+    ifcopenshell.api.run("material.add_layer", file, layer_set=layer_set, material=None)
+    # this ifcopenshell defaults add_layer thickness to 0.1; reset to None to exercise the unset contract
+    ifcopenshell.api.run(
+        "material.edit_layer", file, layer=layer_set.MaterialLayers[0], attributes={"LayerThickness": None}
+    )
+
+    construction = read_construction_from_element(type_element)
+
+    assert construction["layers"][0]["material_id"] is None
+    assert construction["layers"][0]["thickness_m"] == 0.0  # LayerThickness never set
+    assert construction["layers"][0]["placeholder"] == {"name": "", "lambda_value": None}
