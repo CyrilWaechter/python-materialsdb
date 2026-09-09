@@ -259,12 +259,54 @@ async function loadList() {
 
 let incoming = [];
 
+/* --- collapsible panel sections (persisted; a new model push fronts the
+ * incoming section by collapsing the other two) --- */
+const SECTION_KEYS = ["saved", "incoming", "mdb"];
+let sectionState = { saved: true, incoming: true, mdb: true };
+try {
+  Object.assign(sectionState, JSON.parse(localStorage.getItem("materialsdb.sections") || "{}"));
+} catch {}
+
+function applySections() {
+  for (const key of SECTION_KEYS) {
+    const container = $(`section-${key}`);
+    if (container) container.style.display = sectionState[key] ? "" : "none";
+    const chev = document.querySelector(`.section-toggle[data-section="${key}"] .chev`);
+    if (chev) chev.textContent = sectionState[key] ? "▾" : "▸";
+  }
+}
+
+function toggleSection(key) {
+  sectionState[key] = !sectionState[key];
+  try {
+    localStorage.setItem("materialsdb.sections", JSON.stringify(sectionState));
+  } catch {}
+  applySections();
+}
+
+document.querySelectorAll(".section-toggle").forEach((header) =>
+  header.addEventListener("click", () => toggleSection(header.dataset.section)));
+applySections();
+
 async function refreshIncoming() {
   try {
     incoming = (await api("/api/composer/incoming")).incoming;
   } catch {
     incoming = [];
   }
+  const grew = lastIncomingLength !== null && incoming.length > lastIncomingLength;
+  lastIncomingLength = incoming.length;
+  if (grew) {
+    sectionState.saved = false;
+    sectionState.mdb = false;
+    sectionState.incoming = true;
+    try {
+      localStorage.setItem("materialsdb.sections", JSON.stringify(sectionState));
+    } catch {}
+    applySections();
+  }
+  const count = $("incoming-count");
+  if (count) count.textContent = incoming.length ? `(${incoming.length})` : "";
   const box = $("incoming-list");
   box.innerHTML = incoming.length
     ? incoming.map((construction, index) =>
@@ -282,7 +324,13 @@ async function refreshIncoming() {
     setStatus(`editing copy of ${result.construction.name} — save to keep, send to: to push back`);
     refreshIncoming();
   }));
+  if (grew) {
+    const header = document.querySelector('.section-toggle[data-section="incoming"]');
+    if (header && header.scrollIntoView) header.scrollIntoView({ block: "nearest" });
+  }
 }
+
+let lastIncomingLength = null;
 setInterval(refreshIncoming, 2000);
 refreshIncoming();
 

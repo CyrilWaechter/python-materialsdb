@@ -45,6 +45,7 @@ globalThis.document = {
     if (!elements.has(key)) elements.set(key, new El("div"));
     return elements.get(key);
   },
+  querySelectorAll: () => [],
 };
 globalThis.window = { MATERIALSDB_TOKEN: "test-token" };
 globalThis.document.documentElement = { lang: "en" };
@@ -53,10 +54,13 @@ globalThis.document.documentElement = { lang: "en" };
 const DETAIL_002 = { id: "00000000-0000-0000-0000-000000000002", names: { fr: "Beton B" }, layers: [{ id: "b1", thick: 150, lambda_value: 0.21 }] };
 const DETAIL_001 = { id: "00000000-0000-0000-0000-000000000001", names: { fr: "Isolant A" }, layers: [{ id: "a1", thick: 200, lambda_value: 0.036 }, { id: "a2", thick: 100, lambda_value: 0.05 }] };
 
+const incomingFeed = { items: [] };
+
 async function fakeFetch(path, options = {}) {
   console.error("[fetch]", path);
   const jsonHeaders = { "Content-Type": "application/json" };
   const json = (data) => new Response(JSON.stringify(data), { headers: jsonHeaders });
+  if (path === "/api/composer/incoming") return json({ incoming: incomingFeed.items });
   if (path.startsWith("/api/materials?type=construction")) return json({ materials: [] });
   if (path.startsWith("/api/materials/")) {
     const id = decodeURIComponent(path.split("/").pop());
@@ -101,8 +105,9 @@ const sandbox = { window: globalThis.window, document: globalThis.document, fetc
                     startTargetPoll: () => ({ current: () => null, refresh: async () => {}, stop: () => {} }),
                   } };
 sandbox.globalThis = sandbox;
+sandbox.incomingFeed = incomingFeed;
 vm.createContext(sandbox);
-vm.runInContext(src + "\n;Object.assign(globalThis,{__get:(id)=>document.getElementById(id),__addLayer:addLayerFromChooser,__layers:()=>layers,__render:renderLayers,__evalInContext:(code)=>eval(code)});", sandbox);
+vm.runInContext(src + "\n;Object.assign(globalThis,{__get:(id)=>document.getElementById(id),__addLayer:addLayerFromChooser,__layers:()=>layers,__render:renderLayers,__evalInContext:(code)=>eval(code),__setIncoming:(items)=>{globalThis.incomingFeed.items=items;}});", sandbox);
 
 const S = sandbox;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -155,4 +160,33 @@ if (!hasBadge || !hasPhName || hasSelect) {
   console.log("BUG REPRODUCED: placeholder row rendered wrong");
   process.exit(1);
 }
+
+// collapsible sections: a new model push fronts the incoming section
+console.log("\n== collapsible sections: a new push fronts incoming ==");
+S.__setIncoming([{ name: "Mur A", layers: [{ material_id: null, thickness_m: 0.1 }] }]);
+await S.__evalInContext("(async () => { await refreshIncoming(); })()");
+const savedSection = S.__get("section-saved");
+const mdbSection = S.__get("section-mdb");
+const incomingSection = S.__get("section-incoming");
+const badge = S.__get("incoming-count").textContent;
+const savedChev = S.__evalInContext(`document.querySelector('.section-toggle[data-section="saved"] .chev').textContent`);
+const incomingChev = S.__evalInContext(`document.querySelector('.section-toggle[data-section="incoming"] .chev').textContent`);
+console.log(
+  `saved: ${JSON.stringify(savedSection.style.display)} | mdb: ${JSON.stringify(mdbSection.style.display)} | ` +
+  `incoming: ${JSON.stringify(incomingSection.style.display)} | badge: ${badge} | ` +
+  `chevs: saved=${savedChev} incoming=${incomingChev}`,
+);
+const collapseOk =
+  savedSection.style.display === "none" &&
+  mdbSection.style.display === "none" &&
+  incomingSection.style.display === "" &&
+  badge === "(1)" &&
+  savedChev === "▸" &&
+  incomingChev === "▾";
+if (!collapseOk) {
+  console.log("BUG REPRODUCED: new incoming push did not front the incoming section");
+  process.exit(1);
+}
+console.log("sections fronted: OK");
+
 console.log("OK");

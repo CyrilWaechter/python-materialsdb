@@ -22,6 +22,9 @@
  tr.rsrow td { background: #f4f4f8; font-style: italic; }
  .warn { color: #b60; font-weight: bold; cursor: help; }
  .label { font-size: .7rem; text-transform: uppercase; color: #666; margin-top: .4rem; }
+ .section-toggle { cursor: pointer; user-select: none; }
+ .section-toggle:hover { color: #06c; }
+ .chev { display: inline-block; width: 1em; }
 </style>
 </head>
 <body>
@@ -32,17 +35,23 @@
 </div>
 <div style="display:flex;gap:1rem;margin:1rem;height:calc(100vh - 2rem)">
  <div id="saved" style="width:15rem;border-right:1px solid #ccc;padding-right:.6rem;overflow:auto">
-  <h3>Constructions</h3>
-  <ul id="saved-list" style="list-style:none;padding:0"></ul>
-  <button id="new">new</button><button id="delete">delete</button>
+  <h3 class="section-toggle" data-section="saved">Constructions <span class="chev">▾</span></h3>
+  <div id="section-saved">
+   <ul id="saved-list" style="list-style:none;padding:0"></ul>
+   <button id="new">new</button><button id="delete">delete</button>
+  </div>
   <hr>
-  <div class="label">materialsdb (read-only)</div>
-  <input id="mdb-search" placeholder="search…" style="width:95%">
-  <select id="mdb-company" style="width:95%;margin-top:.25rem"><option value="">all companies</option></select>
-  <ul id="mdb-list" style="list-style:none;padding:0;font-size:.85rem"></ul>
+  <h4 class="section-toggle" data-section="mdb"><span class="label" style="margin-top:0">materialsdb (read-only)</span> <span class="chev">▾</span></h4>
+  <div id="section-mdb">
+   <input id="mdb-search" placeholder="search…" style="width:95%">
+   <select id="mdb-company" style="width:95%;margin-top:.25rem"><option value="">all companies</option></select>
+   <ul id="mdb-list" style="list-style:none;padding:0;font-size:.85rem"></ul>
+  </div>
   <hr>
-  <div class="label">incoming from model</div>
-  <ul id="incoming-list" style="list-style:none;padding:0;font-size:.85rem"></ul>
+  <h4 class="section-toggle" data-section="incoming">incoming from model <span id="incoming-count" style="color:#888;font-size:.8rem"></span> <span class="chev">▾</span></h4>
+  <div id="section-incoming">
+   <ul id="incoming-list" style="list-style:none;padding:0;font-size:.85rem"></ul>
+  </div>
   </div>
   <div id="editor" style="flex:2;display:flex;flex-direction:column">
    <div id="readonly-ui" style="display:none"></div>
