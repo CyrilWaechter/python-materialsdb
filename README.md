@@ -102,7 +102,8 @@ Push materials straight from the picker into the IFC model open in
 [Bonsai](https://bonsai.ifcopenshell.org). Install it from the
 extension repository: in Blender, *Preferences ▸ Get Extensions ▸ ⌄ ▸
 Add Remote Repository* and add
-`https://cyrilwaechter.github.io/python-materialsdb/`, then install
+`https://cyrilwaechter.github.io/python-materialsdb/index.json`, then
+install
 *materialsdb listener* (updates appear in the same panel). Manual
 install stays available: build `dist/materialsdb_listener.zip` with
 `python3 dev_utils/build_bonsai_addon.py` and use

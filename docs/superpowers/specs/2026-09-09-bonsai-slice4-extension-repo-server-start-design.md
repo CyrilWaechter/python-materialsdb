@@ -16,7 +16,10 @@ Base spec: `2026-09-09-bonsai-slice3-construction-roundtrip-design.md` (round-tr
 
 - **Hosting: GitHub Pages on this repo.** CI publishes `index.json` + zips
   (+ html listing) to the `gh-pages` branch. Users add
-  `https://cyrilwaechter.github.io/python-materialsdb/` once under
+  `https://cyrilwaechter.github.io/python-materialsdb/index.json` once
+  under (Blender 5.2 fetches the registered URL as-is and parses it as
+  the repository manifest, so the URL must point at the `index.json`
+  file, not the directory)
   *Preferences ▸ Get Extensions ▸ Add Remote Repository*; install and
   updates then live in Blender's UI. Manual zip install remains a fallback.
 - **Publish trigger: GitHub release.** The tag (without `v`) becomes the
