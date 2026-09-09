@@ -22,7 +22,8 @@
  tr.rsrow td { background: #f4f4f8; font-style: italic; }
  .warn { color: #b60; font-weight: bold; cursor: help; }
  .label { font-size: .7rem; text-transform: uppercase; color: #666; margin-top: .4rem; }
- .section-toggle { cursor: pointer; user-select: none; }
+ .section-toggle { cursor: pointer; user-select: none; font-size: .75rem; font-weight: bold;
+                   text-transform: uppercase; letter-spacing: .03em; color: #666; margin: .45rem 0 .25rem; }
  .section-toggle:hover { color: #06c; }
  .chev { display: inline-block; width: 1em; }
 </style>
@@ -35,20 +36,20 @@
 </div>
 <div style="display:flex;gap:1rem;margin:1rem;height:calc(100vh - 2rem)">
  <div id="saved" style="width:15rem;border-right:1px solid #ccc;padding-right:.6rem;overflow:auto">
-  <h3 class="section-toggle" data-section="saved">Constructions <span class="chev">▾</span></h3>
+  <h3 class="section-toggle" data-section="saved">Saved <span class="chev">▾</span></h3>
   <div id="section-saved">
    <ul id="saved-list" style="list-style:none;padding:0"></ul>
    <button id="new">new</button><button id="delete">delete</button>
   </div>
   <hr>
-  <h4 class="section-toggle" data-section="mdb"><span class="label" style="margin-top:0">materialsdb (read-only)</span> <span class="chev">▾</span></h4>
+  <h4 class="section-toggle" data-section="mdb">Materialsdb (read-only) <span class="chev">▾</span></h4>
   <div id="section-mdb">
    <input id="mdb-search" placeholder="search…" style="width:95%">
    <select id="mdb-company" style="width:95%;margin-top:.25rem"><option value="">all companies</option></select>
    <ul id="mdb-list" style="list-style:none;padding:0;font-size:.85rem"></ul>
   </div>
   <hr>
-  <h4 class="section-toggle" data-section="incoming">incoming from model <span id="incoming-count" style="color:#888;font-size:.8rem"></span> <span class="chev">▾</span></h4>
+  <h4 class="section-toggle" data-section="incoming">Incoming from model <span id="incoming-count" style="color:#888;font-size:.8rem"></span> <span class="chev">▾</span></h4>
   <div id="section-incoming">
    <ul id="incoming-list" style="list-style:none;padding:0;font-size:.85rem"></ul>
   </div>
