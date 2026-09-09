@@ -76,3 +76,15 @@ def test_reregisters_after_server_restart(monkeypatch):
     registers = [p for method, p in calls if method == "POST" and p == "/api/listener/register"]
     assert registers == ["/api/listener/register", "/api/listener/register"]
     assert [method for method, _ in calls] == ["POST", "GET", "POST"]
+
+
+def test_clear_gui_info_removes_stale_file(tmp_path, monkeypatch):
+    gui_json = tmp_path / "materialsdb" / "gui.json"
+    gui_json.parent.mkdir(parents=True)
+    gui_json.write_text('{"port": 1, "token": "t", "pid": 2}', encoding="utf-8")
+    monkeypatch.setattr(discovery, "_cache_folder", lambda: tmp_path / "materialsdb")
+
+    discovery.clear_gui_info()
+
+    assert not gui_json.exists()
+    discovery.clear_gui_info()  # idempotent on absence

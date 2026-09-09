@@ -24,6 +24,12 @@ def read_gui_info():
         return None
 
 
+def clear_gui_info():
+    """Remove a (possibly stale) discovery file; the server rewrites one on
+    start, and a dead server's leftover would point clients at a dead port."""
+    (_cache_folder() / "gui.json").unlink(missing_ok=True)
+
+
 class ListenerClient:
     """Minimal HTTP client: register once per model, poll for pushes, report
     application status back to the GUI."""
