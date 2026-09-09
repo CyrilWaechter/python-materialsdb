@@ -105,6 +105,15 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
     lang = lang or config.get_lang()
     layers = []
     for layer in construction.layers:
+        if layer.placeholder is not None:
+            layers.append(
+                {
+                    "material_id": None,
+                    "thickness_m": layer.thickness_m,
+                    "placeholder": dict(layer.placeholder),
+                }
+            )
+            continue
         summary = store_.get_summary(layer.material_id)
         material = store_.get(layer.material_id)
         if summary is None or material is None:

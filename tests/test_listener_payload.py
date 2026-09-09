@@ -184,3 +184,29 @@ def test_build_add_construction_unknown_material(store):
 
     assert payload is None
     assert any("nope" in problem for problem in problems)
+
+
+def test_build_add_construction_placeholder_passthrough(store):
+    from materialsdb.gui.listener import build_add_construction_payload
+
+    payload, problems = build_add_construction_payload(
+        store,
+        body={
+            "name": "Mixed wall",
+            "design_usage": "consDesignForWall",
+            "layers": [
+                {"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.2},
+                {"material_id": None, "thickness_m": 0.18, "placeholder": {"name": "Brique", "lambda_value": 0.21}},
+            ],
+        },
+    )
+
+    assert problems == []
+    layers = payload["construction"]["layers"]
+    assert layers[0]["material_id"] == "00000000-0000-0000-0000-000000000001"
+    assert "placeholder" not in layers[0]
+    assert layers[1] == {
+        "material_id": None,
+        "thickness_m": 0.18,
+        "placeholder": {"name": "Brique", "lambda_value": 0.21},
+    }
