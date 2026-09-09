@@ -11,6 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import ifcopenshell.api
 from bonsai import tool
 
 import bonsai_addon
@@ -327,6 +328,91 @@ def test_undo_removes_pushed_type_and_object(tmp_path):
         assert bpy.data.objects.get("IfcWallType/Mur 20+16") is None
         assert len(file.by_type("IfcWallType")) == 0
         assert len(file.by_type("IfcMaterialLayerSet")) == 0
+    finally:
+        if server is not None:
+            _stop_server(server, old_cache_env)
+
+
+def test_construction_roundtrip_from_model(tmp_path):
+    """Select an occurrence, push its layer set to the composer, consume it,
+    edit, push back: same set entity updated, placeholder material re-attached
+    by name (no duplicate IfcMaterial)."""
+    import bpy
+
+    server, _cache_dir, info, old_cache_env = _seeded_server(tmp_path)
+    try:
+        port, token = info["port"], info["token"]
+        file = tool.Ifc.get()
+
+        # build a model-side type + occurrence with a mixed layer set
+        type_element = ifcopenshell.api.run("root.create_entity", file, ifc_class="IfcWallType", name="Mur 20+16")
+        occurrence = ifcopenshell.api.run("root.create_entity", file, ifc_class="IfcWall", name="Mur occurrence")
+        ifcopenshell.api.run("type.assign_type", file, related_objects=[occurrence], relating_type=type_element)
+        layer_set = ifcopenshell.api.run(
+            "material.add_material_set", file, name="Mur 20+16", set_type="IfcMaterialLayerSet"
+        )
+        ifcopenshell.api.run(
+            "material.assign_material", file, products=[type_element], type="IfcMaterialLayerSet", material=layer_set
+        )
+        resolvable = ifcopenshell.api.run("material.add_material", file, name="Isolant A")
+        identity = ifcopenshell.api.run("pset.add_pset", file, product=resolvable, name="materialsdb")
+        ifcopenshell.api.run(
+            "pset.edit_pset", file, pset=identity, properties={"material_id": "00000000-0000-0000-0000-000000000001"}
+        )
+        foreign = ifcopenshell.api.run("material.add_material", file, name="Brique terrecuite")
+        thermal = ifcopenshell.api.run("pset.add_pset", file, product=foreign, name="Pset_MaterialThermal")
+        ifcopenshell.api.run("pset.edit_pset", file, pset=thermal, properties={"ThermalConductivity": 0.21})
+        layer_a = ifcopenshell.api.run("material.add_layer", file, layer_set=layer_set, material=resolvable)
+        layer_b = ifcopenshell.api.run("material.add_layer", file, layer_set=layer_set, material=foreign)
+        ifcopenshell.api.run("material.edit_layer", file, layer=layer_a, attributes={"LayerThickness": 0.2})
+        ifcopenshell.api.run("material.edit_layer", file, layer=layer_b, attributes={"LayerThickness": 0.18})
+
+        # an active occurrence object so the panel operator has a selection
+        obj = bpy.data.objects.new("Mur occurrence", None)
+        tool.Ifc.link(occurrence, obj)
+        tool.Root.set_object_name(obj, occurrence)
+        tool.Collector.assign(obj)
+        bpy.context.view_layer.objects.active = obj
+
+        previous = bonsai_addon._CLIENT
+        bonsai_addon._CLIENT = client = ListenerClient()
+        client.register(bonsai_addon._model_path())
+        try:
+            assert bpy.ops.materialsdb.send_construction() == {"FINISHED"}
+        finally:
+            bonsai_addon._CLIENT = previous
+
+        status, listed = _request(port, token, "GET", "/api/composer/incoming")
+        assert status == 200
+        assert listed["incoming"][0]["name"] == "Mur 20+16"
+        assert listed["incoming"][0]["layers"][1]["placeholder"] == {"name": "Brique terrecuite", "lambda_value": 0.21}
+
+        # composer side: consume + edit (thickness change) + push back
+        status, consumed = _request(port, token, "POST", "/api/composer/incoming/consume", payload={"index": 0})
+        assert status == 200
+        construction = consumed["construction"]
+        construction["layers"][0]["thickness_m"] = 0.25
+        status, body = _request(
+            port,
+            token,
+            "POST",
+            "/api/listener/send",
+            {"client_id": client.client_id, "action": "add_construction", "construction": construction},
+        )
+        assert status == 200, body
+
+        materials_before = len(file.by_type("IfcMaterial"))
+        bonsai_addon._CLIENT = client
+        try:
+            assert bonsai_addon._poll_timer() == 1.0
+        finally:
+            bonsai_addon._CLIENT = previous
+
+        layer_set_after = file.by_type("IfcMaterialLayerSet")[0]
+        assert {round(l.LayerThickness, 3) for l in layer_set_after.MaterialLayers} == {0.25, 0.18}
+        assert len(file.by_type("IfcMaterial")) == materials_before  # placeholder re-attached, not duplicated
+        assert len(file.by_type("IfcWallType")) == 1
+        assert bpy.data.objects.get("IfcWallType/Mur 20+16") is not None  # still outliner-linked
     finally:
         if server is not None:
             _stop_server(server, old_cache_env)
