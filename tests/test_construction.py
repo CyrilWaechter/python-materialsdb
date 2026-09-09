@@ -295,12 +295,14 @@ def test_u_value_flags_placeholder_without_lambda(store):
     assert result.missing_lambda_ids == [None]
 
 
-def test_save_load_roundtrips_placeholders(store, tmp_path):
-    from materialsdb.construction import load_construction, save_construction
+def test_save_load_roundtrips_placeholders(store, tmp_path, monkeypatch):
+    import materialsdb.construction as cm
 
-    save_construction(_placeholder_construction(), store)
+    monkeypatch.setattr(cm, "constructions_dir", lambda: tmp_path / "constr")
 
-    loaded = load_construction("Mixed wall", store)
+    cm.save_construction(_placeholder_construction(), store)
+
+    loaded = cm.load_construction("Mixed wall", store)
     assert loaded is not None
     assert loaded.layers[1].material_id is None
     assert loaded.layers[1].placeholder == {"name": "Brique terrecuite", "lambda_value": 0.21}
