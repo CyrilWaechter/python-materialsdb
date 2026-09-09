@@ -110,7 +110,12 @@ into the model's material library (identity + per-layer psets included);
 assigning them to objects stays a normal Bonsai action. Pushed
 constructions become typed elements (`IfcWallType`/`IfcSlabType`/
 `IfcRoofType` per the design usage) with their `IfcMaterialLayerSet`,
-visible in the outliner and revertible with Ctrl+Z.
+visible in the outliner and revertible with Ctrl+Z. Round-trip: select
+the wall (or its type) in Bonsai and hit *Send type to composer* in the
+materialsdb panel — the construction appears under *incoming from model*
+on the constructions page for editing. Layers whose material is not a
+materialsdb material are kept as "model material" placeholders (λ read
+from the model) and re-attach to the same material on push-back.
 
 # How to install
 ## Using pip
