@@ -196,6 +196,9 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             self._send(400, {"error": f"unsupported action: {action}"})
             return
         listener["pending"] = resolved
+        # a fresh push invalidates the previous applied/error mark: the
+        # dropdown shows a pending state until the add-on reports the new one
+        listener["last_status"] = {"status": "pending", "detail": ""}
         self._send(200, {"ok": True, "queued": queued, "summary": summary, "missing": missing})
 
     def _listener_status(self, payload):

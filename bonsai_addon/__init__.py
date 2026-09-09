@@ -37,6 +37,7 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
             _CLIENT.report("applied", f"{count} material(s) added")
         elif action == "add_construction":
             result = insert.apply_add_construction(tool.Ifc.get(), payload)
+            _link_pushed_types(tool.Ifc.get(), payload["construction"])
             _CLIENT.report(
                 "applied",
                 f"{result['types_created']} type(s) created, {result['sets_updated']} set(s) updated, "
@@ -48,6 +49,24 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
 
 def _model_path():
     return str(tool.Ifc.get_path() or "")
+
+
+def _link_pushed_types(file, construction):
+    """Bonsai's outliner is the stock Blender outliner: an IFC element shows
+    only when a Blender object exists for it, placed in the IfcTypeProduct
+    collection. Mirror bonsai's own type-creation flow (link + name +
+    collector) for pushed types; idempotent via get_object."""
+    for cls in construction["types"]:
+        for element in file.by_type(cls):
+            if element.Name != construction["name"]:
+                continue
+            if tool.Ifc.get_object(element) is not None:
+                continue
+            obj = bpy.data.objects.new(element.Name, None)
+            tool.Ifc.link(element, obj)
+            tool.Root.set_object_name(obj, element)
+            tool.Collector.assign(obj)
+            bpy.context.view_layer.update()
 
 
 def _poll_timer():

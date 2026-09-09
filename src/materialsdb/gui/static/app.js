@@ -402,7 +402,7 @@ async function sendToBonsai() {
     method: "POST",
     body: JSON.stringify({ client_id, action: "add_materials", items }),
   });
-  setStatus(`sent to Bonsai: ${result.summary}`);
+  PickerCore.flash(setStatus, () => $("status").textContent, `sent to ${bonsaiTarget.label() || "?"}: ${result.summary}`);
 }
 
 function setStatus(text) { $("status").textContent = text; return text; }

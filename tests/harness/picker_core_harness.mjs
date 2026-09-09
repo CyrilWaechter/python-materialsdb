@@ -58,7 +58,20 @@ const runStartTargetPoll = async () => {
   const responses = [
     {
       clients: [
-        { client_id: "bonsai-test-client", model_path: "/home/u/wall.ifc", last_status: { status: "applied" } },
+        {
+          client_id: "bonsai-test-client",
+          model_path: "/home/u/wall.ifc",
+          last_status: { status: "pending", detail: "1 type(s) created, 0 set(s) updated" },
+        },
+      ],
+    },
+    {
+      clients: [
+        {
+          client_id: "bonsai-test-client",
+          model_path: "/home/u/wall.ifc",
+          last_status: { status: "applied", detail: "1 type(s) created, 0 set(s) updated" },
+        },
       ],
     },
     { clients: [] },
@@ -83,8 +96,22 @@ const runStartTargetPoll = async () => {
     `html=${select.innerHTML}`,
   );
   stpCheck(
-    "first refresh marks an applied last_status",
-    select.innerHTML.includes("\u2713"),
+    "first refresh marks a pending last_status with \u2026",
+    select.innerHTML.includes("\u2026"),
+    `html=${select.innerHTML}`,
+  );
+  stpCheck(
+    "pending option carries the detail tooltip",
+    select.innerHTML.includes("title=") && select.innerHTML.includes("1 type(s) created"),
+    `html=${select.innerHTML}`,
+  );
+  stpCheck("label() returns the selected model basename", handle.label() === "wall.ifc", `label=${handle.label()}`);
+
+  await handle.refresh();
+
+  stpCheck(
+    "applied last_status flips the mark to \u2713",
+    select.innerHTML.includes("\u2713") && !select.innerHTML.includes("\u2026"),
     `html=${select.innerHTML}`,
   );
 
@@ -92,10 +119,26 @@ const runStartTargetPoll = async () => {
 
   stpCheck("empty refresh hides the target select", select.style.display === "none", `display=${select.style.display}`);
   stpCheck("empty refresh disables the send button", button.disabled === true, `disabled=${button.disabled}`);
+  stpCheck("label() is null with no clients", handle.label() === null, `label=${handle.label()}`);
+};
+
+const runFlash = async () => {
+  let current = "";
+  const set = (text) => (current = text);
+  const get = () => current;
+  PickerCore.flash(set, get, "sent to wall.ifc: 1 material(s)", 10);
+  const shown = current === "sent to wall.ifc: 1 material(s)";
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const cleared = current === "";
+  if (!shown || !cleared) {
+    stpFailed += 1;
+    console.log(`FAIL flash: shown=${shown} cleared=${cleared}`);
+  }
 };
 
 try {
   await runStartTargetPoll();
+  await runFlash();
 } catch (err) {
   stpFailed = 1;
   console.log(`FAIL startTargetPoll harness: ${err && err.stack ? err.stack : err}`);

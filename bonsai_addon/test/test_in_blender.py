@@ -238,6 +238,12 @@ def test_construction_roundtrip_and_undo(tmp_path):
         layer_set = wall_types[0].HasAssociations[0].RelatingMaterial
         assert layer_set.is_a("IfcMaterialLayerSet")
         assert {round(l.LayerThickness, 3) for l in layer_set.MaterialLayers} == {0.22, 0.15}
+        # bonsai-native linking: the pushed type is visible in the outliner
+        # (object in the IfcTypeProduct project-child collection)
+        status, body = _request(port, token, "GET", "/api/listener/clients")
+        obj = bpy.data.objects.get("IfcWallType/Mur 20+16")  # tool.Loader.get_name prefixes the class
+        assert obj is not None
+        assert any(coll.name == "IfcTypeProduct" for coll in obj.users_collection)
 
         # re-send with a modified thickness: same set entity updated in place
         set_step_id = layer_set.id()
@@ -265,16 +271,70 @@ def test_construction_roundtrip_and_undo(tmp_path):
         assert status == 200
         assert body["clients"][0]["last_status"]["status"] == "applied"
 
-        # Blender undo removes the last push; redo restores it
+        # Blender undo removes the last push; redo restores it. The pushed
+        # type object came from push 1, so it survives this first undo.
         bpy.ops.ed.undo()
         assert len(file.by_type("IfcMaterialLayerSet")) == 0 or (
             {round(l.LayerThickness, 3) for l in file.by_type("IfcMaterialLayerSet")[0].MaterialLayers} == {0.22, 0.15}
         )
+        assert bpy.data.objects.get("IfcWallType/Mur 20+16") is not None
         bpy.ops.ed.redo()
         assert {round(l.LayerThickness, 3) for l in file.by_type("IfcMaterialLayerSet")[0].MaterialLayers} == {
             0.25,
             0.15,
         }
+    finally:
+        if server is not None:
+            _stop_server(server, old_cache_env)
+
+
+def test_undo_removes_pushed_type_and_object(tmp_path):
+    """A full undo rewinds the pushed construction AND its outliner object."""
+    import bpy
+
+    server, _cache_dir, info, old_cache_env = _seeded_server(tmp_path)
+    try:
+        port, token = info["port"], info["token"]
+        client = ListenerClient()
+        client.register(bonsai_addon._model_path())
+        status, body = _request(
+            port,
+            token,
+            "POST",
+            "/api/listener/send",
+            {
+                "client_id": client.client_id,
+                "action": "add_construction",
+                "construction": {
+                    "name": "Mur 20+16",
+                    "design_usage": "consDesignForWall",
+                    "layers": [
+                        {"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.22},
+                        {"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15},
+                    ],
+                },
+            },
+        )
+        assert status == 200, body
+
+        # marker BEFORE the push: undo() then reverts to this snapshot
+        bpy.ops.ed.undo_push(message="pre-push")
+        previous = bonsai_addon._CLIENT
+        bonsai_addon._CLIENT = client
+        try:
+            assert bonsai_addon._poll_timer() == 1.0
+        finally:
+            bonsai_addon._CLIENT = previous
+        bpy.ops.ed.undo_push(message="materialsdb push")
+
+        file = tool.Ifc.get()
+        assert len(file.by_type("IfcWallType")) == 1
+        assert bpy.data.objects.get("IfcWallType/Mur 20+16") is not None
+
+        bpy.ops.ed.undo()
+        assert bpy.data.objects.get("IfcWallType/Mur 20+16") is None
+        assert len(file.by_type("IfcWallType")) == 0
+        assert len(file.by_type("IfcMaterialLayerSet")) == 0
     finally:
         if server is not None:
             _stop_server(server, old_cache_env)

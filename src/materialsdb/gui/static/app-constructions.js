@@ -454,7 +454,7 @@ $("send-bonsai").onclick = async () => {
       },
     }),
   });
-  setStatus(`sent to Bonsai: ${result.summary}`);
+  PickerCore.flash(setStatus, () => $("status").textContent, `sent to ${bonsaiTarget.label() || "?"}: ${result.summary}`);
 };
 $("export-ifc").onclick = async () => {
   const name = $("name").value.trim(); if (!name || !layers.length) return setStatus("nothing to export");

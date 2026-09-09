@@ -104,9 +104,13 @@ Push materials straight from the picker into the IFC model open in
 `python3 dev_utils/build_bonsai_addon.py`) via Blender's
 *Extensions ▸ Install from Disk*, start the listener from the
 materialsdb panel in the 3D-view sidebar, then run `materialsdb-gui` as
-usual and hit *send to Bonsai* in the picker. Materials are registered
+usual and hit *send to:* (picking the target instance) in the picker or
+the construction maker. Materials are registered
 into the model's material library (identity + per-layer psets included);
-assigning them to objects stays a normal Bonsai action.
+assigning them to objects stays a normal Bonsai action. Pushed
+constructions become typed elements (`IfcWallType`/`IfcSlabType`/
+`IfcRoofType` per the design usage) with their `IfcMaterialLayerSet`,
+visible in the outliner and revertible with Ctrl+Z.
 
 # How to install
 ## Using pip

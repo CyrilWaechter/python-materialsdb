@@ -67,6 +67,7 @@ const PickerCore = (() => {
 
   function startTargetPoll(apiFn, select, button) {
     let clients = [];
+    const labelOf = (c) => (c.model_path ? c.model_path.split(/[\\/]/).pop() : "unnamed");
     const refresh = async () => {
       try {
         clients = (await apiFn("/api/listener/clients")).clients;
@@ -77,9 +78,10 @@ const PickerCore = (() => {
       if (button) button.disabled = !clients.length;
       const previous = select.value;
       select.innerHTML = clients.map((c) => {
-        const label = c.model_path ? c.model_path.split(/[\\/]/).pop() : "Bonsai";
-        const mark = c.last_status ? (c.last_status.status === "applied" ? " \u2713" : " \u2717") : "";
-        return `<option value="${esc(c.client_id)}">${esc(label)}${mark}</option>`;
+        const status = c.last_status ? c.last_status.status : "";
+        const mark = status === "applied" ? " \u2713" : status === "error" ? " \u2717" : status === "pending" ? " \u2026" : "";
+        const detail = c.last_status && c.last_status.detail ? ` title="${esc(c.last_status.detail)}"` : "";
+        return `<option value="${esc(c.client_id)}"${detail}>${esc(labelOf(c))}${mark}</option>`;
       }).join("");
       if (clients.some((c) => c.client_id === previous)) select.value = previous;
     };
@@ -89,8 +91,21 @@ const PickerCore = (() => {
       refresh,
       stop: () => clearInterval(timer),
       current: () => select.value || (clients[0] ? clients[0].client_id : null) || null,
+      label: () => {
+        const current = clients.find((c) => c.client_id === select.value) || clients[0];
+        return current ? labelOf(current) : null;
+      },
     };
   }
 
-  return { CATEGORY_COLORS, decimalToHex, categoryColorStyle, esc, collectItems, startTargetPoll };
+  function flash(setFn, getFn, text, ms = 5000) {
+    /* Show a status message and clear it shortly after, so a new push is
+     * visibly confirmed instead of blending into the previous message. */
+    setFn(text);
+    setTimeout(() => {
+      if (getFn() === text) setFn("");
+    }, ms);
+  }
+
+  return { CATEGORY_COLORS, decimalToHex, categoryColorStyle, esc, collectItems, startTargetPoll, flash };
 })();

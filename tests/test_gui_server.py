@@ -636,6 +636,37 @@ def test_listener_status_and_clients(api):
     ]
 
 
+def test_listener_send_resets_status_to_pending(api):
+    """A fresh push invalidates the previous applied/error mark so the GUI's
+    target dropdown shows a pending state until the new result arrives."""
+    server, state = api
+    request(server, "POST", "/api/listener/register", payload={"client_id": "c1", "model_path": ""}, token=state.token)
+    request(
+        server,
+        "POST",
+        "/api/listener/status",
+        payload={"client_id": "c1", "status": "applied", "detail": "old"},
+        token=state.token,
+    )
+
+    status, _ = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={
+            "client_id": "c1",
+            "action": "add_materials",
+            "items": [{"id": "00000000-0000-0000-0000-000000000001"}],
+        },
+        token=state.token,
+    )
+    assert status == 200
+
+    status, body = request(server, "GET", "/api/listener/clients", token=state.token)
+    assert status == 200
+    assert body["clients"][0]["last_status"] == {"status": "pending", "detail": ""}
+
+
 def test_listener_stale_client_pruned(api, monkeypatch):
     server, state = api
     request(server, "POST", "/api/listener/register", payload={"client_id": "old", "model_path": ""}, token=state.token)
