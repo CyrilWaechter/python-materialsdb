@@ -99,11 +99,19 @@ Ctrl+Z.
 
 # Bonsai integration :
 Push materials straight from the picker into the IFC model open in
-[Bonsai](https://bonsai.ifcopenshell.org). Install
-`dist/materialsdb_listener.zip` (build it with
-`python3 dev_utils/build_bonsai_addon.py`) via Blender's
-*Extensions ▸ Install from Disk*, start the listener from the
-materialsdb panel in the 3D-view sidebar, then run `materialsdb-gui` as
+[Bonsai](https://bonsai.ifcopenshell.org). Install it from the
+extension repository: in Blender, *Preferences ▸ Get Extensions ▸ ⌄ ▸
+Add Remote Repository* and add
+`https://cyrilwaechter.github.io/python-materialsdb/`, then install
+*materialsdb listener* (updates appear in the same panel). Manual
+install stays available: build `dist/materialsdb_listener.zip` with
+`python3 dev_utils/build_bonsai_addon.py` and use
+*Extensions ▸ Install from Disk*. Start the listener from the
+materialsdb panel in the 3D-view sidebar. The panel can also start the
+GUI server itself (*Start server & open picker*) — it needs
+`pip install python-materialsdb` in a system Python (set the
+interpreter in the add-on preferences if autodiscovery picks the wrong
+one). Then run `materialsdb-gui` as
 usual and hit *send to:* (picking the target instance) in the picker or
 the construction maker. Materials are registered
 into the model's material library (identity + per-layer psets included);
