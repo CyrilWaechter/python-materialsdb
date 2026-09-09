@@ -94,6 +94,23 @@ def _apply_style(file, material_entry, material):
         pass
 
 
+def _find_material_by_name(file, name):
+    if not name:
+        return None
+    return next((m for m in file.by_type("IfcMaterial") if m.Name == name), None)
+
+
+def _create_placeholder_material(file, placeholder):
+    material = ifcopenshell.api.run("material.add_material", file, name=str(placeholder.get("name") or "(unnamed)"))
+    lambda_value = placeholder.get("lambda_value")
+    if lambda_value:
+        thermal = ifcopenshell.api.run("pset.add_pset", file, product=material, name="Pset_MaterialThermal")
+        ifcopenshell.api.run(
+            "pset.edit_pset", file, pset=thermal, properties={"ThermalConductivity": float(lambda_value)}
+        )
+    return material
+
+
 def apply_add_materials(file, payload) -> int:
     """Create IfcMaterial (+ identity/property psets, layer + set, style) per
     payload entry. Entries whose (material_id, layer_id) key already exists
@@ -143,13 +160,25 @@ def apply_add_construction(file, payload) -> dict:
     all targets onto it. Generic usage shares ONE set across all types via a
     single IfcRelAssociatesMaterial. Materials are found by their materialsdb
     identity pset or created minimally (identity + style, no per-layer
-    psets)."""
+    psets). Placeholder layers (material_id None) re-attach a model material
+    by name or create one, carrying a Pset_MaterialThermal when a λ is
+    given."""
     construction = payload["construction"]
-    summary = {"types_created": 0, "sets_updated": 0, "materials_created": 0}
+    summary = {"types_created": 0, "sets_updated": 0, "materials_created": 0, "placeholders_matched": 0}
 
     known = existing_materials_by_id(file)
     layers = []
     for layer in construction["layers"]:
+        if layer.get("placeholder") is not None:
+            name = str(layer["placeholder"].get("name") or "")
+            material = _find_material_by_name(file, name)
+            if material is None:
+                material = _create_placeholder_material(file, layer["placeholder"])
+                summary["materials_created"] += 1
+            else:
+                summary["placeholders_matched"] += 1
+            layers.append((layer, material))
+            continue
         material = known.get(layer["material_id"])
         if material is None:
             entry = layer["material"]
@@ -196,14 +225,21 @@ def apply_add_construction(file, payload) -> dict:
     for layer, material in layers:
         ifc_layer = ifcopenshell.api.run("material.add_layer", file, layer_set=the_set, material=material)
         mm = round(float(layer["thickness_m"]) * 1000)
+        entry = layer.get("material")
+        if entry is not None:
+            label = f"{entry['name']} | {mm}mm"
+            description = str(layer["material_id"])
+        else:
+            label = f"{(layer.get('placeholder') or {}).get('name') or '(unnamed)'} | {mm}mm"
+            description = ""
         ifcopenshell.api.run(
             "material.edit_layer",
             file,
             layer=ifc_layer,
             attributes={
                 "LayerThickness": float(layer["thickness_m"]),
-                "Name": f"{layer['material']['name']} | {mm}mm",
-                "Description": str(layer["material_id"]),
+                "Name": label,
+                "Description": description,
             },
         )
 

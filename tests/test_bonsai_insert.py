@@ -7,6 +7,7 @@ pytest.importorskip("ifcopenshell")
 
 import ifcopenshell
 import ifcopenshell.api
+import ifcopenshell.util.element
 
 from materialsdb.gui.listener import build_add_materials_payload
 from materialsdb.store import MaterialStore
@@ -189,7 +190,7 @@ def test_construction_creates_type_and_layers():
 
     summary = apply_add_construction(file, CONSTRUCTION_PAYLOAD)
 
-    assert summary == {"types_created": 1, "sets_updated": 0, "materials_created": 2}
+    assert summary == {"types_created": 1, "sets_updated": 0, "materials_created": 2, "placeholders_matched": 0}
     types = file.by_type("IfcWallType")
     assert len(types) == 1
     wall_type = types[0]
@@ -217,7 +218,7 @@ def test_construction_resend_updates_same_set():
     modified["construction"]["layers"][0]["thickness_m"] = 0.25
     summary = apply_add_construction(file, modified)
 
-    assert summary == {"types_created": 0, "sets_updated": 1, "materials_created": 0}
+    assert summary == {"types_created": 0, "sets_updated": 1, "materials_created": 0, "placeholders_matched": 0}
     assert len(file.by_type("IfcWallType")) == 1  # no duplicate type
     assert len(file.by_type("IfcMaterialLayerSet")) == 1  # same set entity, modified in place
     assert file.by_type("IfcMaterialLayerSet")[0].id() == set_before
@@ -284,3 +285,66 @@ def test_existing_materials_by_id_reads_via_psets(store):
 
     assert set(found) == {"00000000-0000-0000-0000-000000000001"}
     assert found["00000000-0000-0000-0000-000000000001"].Name == "Isolant A"
+
+
+MIXED_PAYLOAD = {
+    "action": "add_construction",
+    "construction": {
+        "name": "Mixed wall",
+        "design_usage": "consDesignForWall",
+        "types": ["IfcWallType"],
+        "layers": [
+            {
+                "material_id": "00000000-0000-0000-0000-000000000001",
+                "thickness_m": 0.2,
+                "material": {
+                    "source_id": "00000000-0000-0000-0000-000000000001",
+                    "name": "Isolant A",
+                    "description": "Panneau isolant",
+                    "category": "Insulation",
+                    "color": 16711680,
+                    "identity": {
+                        "material_id": "00000000-0000-0000-0000-000000000001",
+                        "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
+                        "company": "Mini SA",
+                    },
+                },
+            },
+            {
+                "material_id": None,
+                "thickness_m": 0.18,
+                "placeholder": {"name": "Brique terrecuite", "lambda_value": 0.21},
+            },
+        ],
+    },
+}
+
+
+def test_construction_placeholder_matches_model_material_by_name():
+    file = ifcopenshell.file(schema="IFC4")
+    foreign = ifcopenshell.api.run("material.add_material", file, name="Brique terrecuite")
+    thermal = ifcopenshell.api.run("pset.add_pset", file, product=foreign, name="Pset_MaterialThermal")
+    ifcopenshell.api.run("pset.edit_pset", file, pset=thermal, properties={"ThermalConductivity": 0.21})
+    materials_before = len(file.by_type("IfcMaterial"))
+
+    summary = apply_add_construction(file, MIXED_PAYLOAD)
+
+    assert summary["placeholders_matched"] == 1
+    assert summary["materials_created"] == 1  # only Isolant A; Brique reused
+    assert len(file.by_type("IfcMaterial")) == materials_before + summary["materials_created"]  # no duplicate
+    layer_set = file.by_type("IfcWallType")[0].HasAssociations[0].RelatingMaterial
+    layers = sorted(layer_set.MaterialLayers, key=lambda l: l.LayerThickness)
+    assert layers[0].Material.Name == "Brique terrecuite"
+    assert layers[1].Material.Name == "Isolant A"
+
+
+def test_construction_placeholder_created_with_thermal_when_absent():
+    file = ifcopenshell.file(schema="IFC4")
+
+    summary = apply_add_construction(file, MIXED_PAYLOAD)
+
+    assert summary["placeholders_matched"] == 0
+    assert summary["materials_created"] == 2
+    brique = next(m for m in file.by_type("IfcMaterial") if m.Name == "Brique terrecuite")
+    thermal = ifcopenshell.util.element.get_psets(brique).get("Pset_MaterialThermal", {})
+    assert thermal.get("ThermalConductivity") == 0.21

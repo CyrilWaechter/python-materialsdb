@@ -44,7 +44,8 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
             _CLIENT.report(
                 "applied",
                 f"{result['types_created']} type(s) created, {result['sets_updated']} set(s) updated, "
-                f"{result['materials_created']} material(s) created",
+                f"{result['materials_created']} material(s) created, "
+                f"{result['placeholders_matched']} placeholder(s) matched",
             )
         else:
             _CLIENT.report("error", f"unknown action: {action}")
