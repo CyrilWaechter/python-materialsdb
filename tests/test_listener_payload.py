@@ -1,10 +1,11 @@
 import pytest
+from pytest import approx
 
 pytest.importorskip("ifcopenshell")
 
 import ifcopenshell
 
-from materialsdb.gui.listener import build_add_materials_payload
+from materialsdb.gui.listener import build_add_construction_payload, build_add_materials_payload
 from materialsdb.ifc.material_builder import MATERIALSDB_PSET, MaterialBuilder
 from materialsdb.store import MaterialStore
 
@@ -210,3 +211,52 @@ def test_build_add_construction_placeholder_passthrough(store):
         "thickness_m": 0.18,
         "placeholder": {"name": "Brique", "lambda_value": 0.21},
     }
+
+
+def _construction_body(design_usage=None, layers=None):
+    return {
+        "name": "Test wall",
+        "design_usage": design_usage,
+        "layers": layers
+        or [
+            {"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15},
+            {"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.2},
+        ],
+    }
+
+
+def test_construction_payload_generic_has_per_type_u_values(store):
+    payload, problems = build_add_construction_payload(store, _construction_body())
+
+    assert problems == []
+    u_values = payload["construction"]["u_values"]
+    assert sorted(u_values) == ["IfcRoofType", "IfcSlabType", "IfcWallType"]
+    assert u_values["IfcWallType"] == approx(u_values["IfcWallType"])
+    # fewer inner resistances → higher U: floor(Rsi .17) < wall(.13) < roof(.10)
+    assert u_values["IfcSlabType"] < u_values["IfcWallType"] < u_values["IfcRoofType"]
+
+
+def test_construction_payload_explicit_usage_has_one_u_value(store):
+    payload, problems = build_add_construction_payload(store, _construction_body(design_usage="consDesignForWall"))
+
+    assert problems == []
+    assert payload["construction"]["u_values"] == {
+        "IfcWallType": approx(payload["construction"]["u_values"]["IfcWallType"])
+    }
+    assert list(payload["construction"]["u_values"]) == ["IfcWallType"]
+
+
+def _construction_body_with_missing_lambda():
+    return {
+        "name": "with btk",
+        "design_usage": None,
+        "layers": [{"material_id": "00000000-0000-0000-0000-000000000004", "thickness_m": 0.3}],
+    }
+
+
+def test_construction_payload_no_u_values_when_lambda_unresolvable(store):
+    # mini_producer.xml has no material ...004: rejected as unknown, no u_values computed
+    payload, problems = build_add_construction_payload(store, _construction_body_with_missing_lambda())
+
+    assert payload is None
+    assert problems == ["unknown material id: 00000000-0000-0000-0000-000000000004"]

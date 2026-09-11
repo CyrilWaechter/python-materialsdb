@@ -140,12 +140,16 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
         )
     if problems:
         return None, problems
+    types = _DESIGN_USAGE_TO_TYPES.get(construction.design_usage or "", GENERIC_TYPES)
     return {
         "action": "add_construction",
         "construction": {
             "name": construction.name,
             "design_usage": construction.design_usage,
-            "types": _DESIGN_USAGE_TO_TYPES.get(construction.design_usage or "", GENERIC_TYPES),
+            "types": types,
+            "u_values": {
+                cls: u for cls, u in cm.u_values_by_type(construction, store_, types).items() if u is not None
+            },
             "layers": layers,
         },
     }, []
