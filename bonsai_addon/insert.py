@@ -8,6 +8,26 @@ root.create_entity takes ifc_class=)."""
 import ifcopenshell.api
 import ifcopenshell.util.element
 
+_THERMAL_TRANSMITTANCE_PSET = {
+    "IfcWallType": "Pset_WallCommon",
+    "IfcSlabType": "Pset_SlabCommon",
+    "IfcRoofType": "Pset_RoofCommon",
+}
+
+
+def _write_thermal_transmittance(file, target, u_value: float) -> bool:
+    """Find-or-create the type's Common pset and set ThermalTransmittance."""
+    pset_name = _THERMAL_TRANSMITTANCE_PSET.get(target.is_a())
+    if pset_name is None:
+        return False
+    found = ifcopenshell.util.element.get_pset(target, name=pset_name)
+    if found is None:
+        pset = ifcopenshell.api.run("pset.add_pset", file, product=target, name=pset_name)
+    else:
+        pset = file.by_id(found["id"])
+    ifcopenshell.api.run("pset.edit_pset", file, pset=pset, properties={"ThermalTransmittance": u_value})
+    return True
+
 
 def _material_id_of(material) -> str | None:
     return ifcopenshell.util.element.get_psets(material).get("materialsdb", {}).get("material_id")
@@ -162,7 +182,8 @@ def apply_add_construction(file, payload) -> dict:
     identity pset or created minimally (identity + style, no per-layer
     psets). Placeholder layers (material_id None) re-attach a model material
     by name or create one, carrying a Pset_MaterialThermal when a λ is
-    given."""
+    given. A `u_values` map (per type class) writes `ThermalTransmittance`
+    into the matching `Pset_<Type>Common` pset, created or edited in place."""
     construction = payload["construction"]
     summary = {"types_created": 0, "sets_updated": 0, "materials_created": 0, "placeholders_matched": 0}
 
@@ -254,4 +275,15 @@ def apply_add_construction(file, payload) -> dict:
         type="IfcMaterialLayerSet",
         material=the_set,
     )
+    u_values = construction.get("u_values") or {}
+    written = 0
+    for target in targets:
+        u_value = u_values.get(target.is_a())
+        if (
+            isinstance(u_value, (int, float))
+            and not isinstance(u_value, bool)
+            and _write_thermal_transmittance(file, target, float(u_value))
+        ):
+            written += 1
+    summary["psets_written"] = written
     return summary

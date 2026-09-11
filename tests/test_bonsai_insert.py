@@ -194,7 +194,13 @@ def test_construction_creates_type_and_layers():
 
     summary = apply_add_construction(file, CONSTRUCTION_PAYLOAD)
 
-    assert summary == {"types_created": 1, "sets_updated": 0, "materials_created": 2, "placeholders_matched": 0}
+    assert summary == {
+        "types_created": 1,
+        "sets_updated": 0,
+        "materials_created": 2,
+        "placeholders_matched": 0,
+        "psets_written": 0,
+    }
     types = file.by_type("IfcWallType")
     assert len(types) == 1
     wall_type = types[0]
@@ -222,7 +228,13 @@ def test_construction_resend_updates_same_set():
     modified["construction"]["layers"][0]["thickness_m"] = 0.25
     summary = apply_add_construction(file, modified)
 
-    assert summary == {"types_created": 0, "sets_updated": 1, "materials_created": 0, "placeholders_matched": 0}
+    assert summary == {
+        "types_created": 0,
+        "sets_updated": 1,
+        "materials_created": 0,
+        "placeholders_matched": 0,
+        "psets_written": 0,
+    }
     assert len(file.by_type("IfcWallType")) == 1  # no duplicate type
     assert len(file.by_type("IfcMaterialLayerSet")) == 1  # same set entity, modified in place
     assert file.by_type("IfcMaterialLayerSet")[0].id() == set_before
@@ -442,3 +454,62 @@ def test_read_construction_materialless_layer_becomes_placeholder():
     assert construction["layers"][0]["material_id"] is None
     assert construction["layers"][0]["thickness_m"] == 0.0  # LayerThickness 0 counts as missing
     assert construction["layers"][0]["placeholder"] == {"name": "", "lambda_value": None}
+
+
+def _u_values(**values):
+    return {"construction": {**_construction_payload()["construction"], "u_values": values}}
+
+
+def test_construction_walltype_gets_thermal_transmittance():
+    file = ifcopenshell.file(schema="IFC4")
+    payload = _u_values(IfcWallType=0.25)
+
+    summary = apply_add_construction(file, payload)
+
+    assert summary["psets_written"] == 1
+    wall = file.by_type("IfcWallType")[0]
+    props = ifcopenshell.util.element.get_pset(wall, name="Pset_WallCommon")
+    assert props is not None and props["ThermalTransmittance"] == pytest.approx(0.25)
+
+
+def test_construction_generic_types_get_their_own_psets():
+    file = ifcopenshell.file(schema="IFC4")
+    payload = _u_values(IfcWallType=0.25, IfcSlabType=0.34, IfcRoofType=0.21)
+    payload["construction"]["types"] = ["IfcWallType", "IfcSlabType", "IfcRoofType"]
+
+    summary = apply_add_construction(file, payload)
+
+    assert summary["psets_written"] == 3
+    expected = {
+        "IfcWallType": ("Pset_WallCommon", 0.25),
+        "IfcSlabType": ("Pset_SlabCommon", 0.34),
+        "IfcRoofType": ("Pset_RoofCommon", 0.21),
+    }
+    for cls, (pset_name, u) in expected.items():
+        props = ifcopenshell.util.element.get_pset(file.by_type(cls)[0], name=pset_name)
+        assert props["ThermalTransmittance"] == pytest.approx(u)
+
+
+def test_construction_repush_updates_thermal_transmittance():
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_construction(file, _u_values(IfcWallType=0.25))
+    set_before = file.by_type("IfcMaterialLayerSet")[0].id()
+
+    payload2 = _u_values(IfcWallType=0.31)
+    payload2["construction"]["layers"][0]["thickness_m"] = 0.25  # set upsert path stays exercised
+    summary = apply_add_construction(file, payload2)
+
+    assert summary["psets_written"] == 1
+    assert file.by_type("IfcMaterialLayerSet")[0].id() == set_before  # same upsert semantics
+    wall = file.by_type("IfcWallType")[0]
+    props = ifcopenshell.util.element.get_pset(wall, name="Pset_WallCommon")
+    assert props["ThermalTransmittance"] == pytest.approx(0.31)
+
+
+def test_construction_without_u_values_writes_no_psets():
+    file = ifcopenshell.file(schema="IFC4")
+
+    summary = apply_add_construction(file, _construction_payload())
+
+    assert summary["psets_written"] == 0
+    assert ifcopenshell.util.element.get_pset(file.by_type("IfcWallType")[0], name="Pset_WallCommon") is None
