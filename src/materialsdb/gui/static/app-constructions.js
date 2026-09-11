@@ -484,6 +484,7 @@ $("delete").onclick = async () => {
 };
 $("add-layer").onclick = () => openChooser(addLayerFromChooser);
 $("layers").addEventListener("dblclick", (event) => {
+  if (event.target.closest("[data-role=replace]")) return;
   const td = event.target.closest("td[data-role=name]");
   if (!td) return;
   const tr = td.closest("tr");
@@ -639,6 +640,7 @@ document.getElementById("country")?.addEventListener("change", async () => {
 
 /* --- chooser: embedded full picker via iframe --- */
 function openChooser(onPick) {
+  if (document.getElementById("chooser")) return;
   const overlay = document.createElement("div");
   overlay.id = "chooser";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:1000";

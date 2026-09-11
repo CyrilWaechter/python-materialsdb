@@ -189,7 +189,6 @@ if (!collapseOk) {
 }
 console.log("sections fronted: OK");
 
-console.log("\n== replace: pencil badge present and replace flow converts placeholder ==");
 console.log("\n== replace flow converts placeholder ==>");
 await S.__evalInContext(
   `layers = [{ material_id: null, thickness_m: 0.2, placeholder: { name: "Old", lambda_value: 0.05 } },

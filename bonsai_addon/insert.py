@@ -5,6 +5,8 @@ api handles GlobalId/OwnerHistory and keeps entities schema-valid; kwargs
 target the 0.9 api (add_layer takes no thickness — edit_layer sets it;
 root.create_entity takes ifc_class=)."""
 
+import math
+
 import ifcopenshell.api
 import ifcopenshell.util.element
 
@@ -275,13 +277,15 @@ def apply_add_construction(file, payload) -> dict:
         type="IfcMaterialLayerSet",
         material=the_set,
     )
-    u_values = construction.get("u_values") or {}
+    raw_u_values = construction.get("u_values")
+    u_values = raw_u_values if isinstance(raw_u_values, dict) else {}
     written = 0
     for target in targets:
         u_value = u_values.get(target.is_a())
         if (
             isinstance(u_value, (int, float))
             and not isinstance(u_value, bool)
+            and math.isfinite(float(u_value))
             and _write_thermal_transmittance(file, target, float(u_value))
         ):
             written += 1
