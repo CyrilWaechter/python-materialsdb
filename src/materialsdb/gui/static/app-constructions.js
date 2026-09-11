@@ -134,9 +134,11 @@ function renderLayers() {
       ? PickerCore.categoryColorStyle(layer.category || "Others", layer.ownColor)
       : "#fff";
     const isPlaceholder = !layer.material_id && layer.placeholder;
-    const nameCell = isPlaceholder
+    const replaceBtn = `<span data-role="replace" data-index="${index}" style="cursor:pointer;margin-left:.3rem" title="replace material">✏</span>`;
+    const cell = isPlaceholder
       ? `${esc(layer.placeholder.name || "(model material)")} <span style="color:#888;font-size:.8rem">model material</span>`
       : esc(layer.display_name || layer.material_id);
+    const nameCell = `${cell}${replaceBtn}`;
     return `<tr data-index="${index}"${selectedAttr} style="cursor:pointer;border-left:4px solid ${catColor}">` +
       `<td>${index + 1}</td><td data-role="name">${nameCell}</td>` +
       `<td>${thicknessCellHtml(layer, index)}</td>` +
@@ -144,6 +146,12 @@ function renderLayers() {
   }).join("");
   tbody.innerHTML = rsBoundaryRow("exterior") + rows + rsBoundaryRow("interior");
   bindThicknessControls();
+  tbody.querySelectorAll("span[data-role=replace]").forEach((span) => {
+    span.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openChooser(replaceLayerFromChooser(Number(span.dataset.index)));
+    });
+  });
   tbody.querySelectorAll("tr[data-index]").forEach((tr) => {
     tr.addEventListener("click", (event) => {
       if (event.target.tagName === "INPUT" || event.target.tagName === "SELECT") return;
@@ -475,6 +483,13 @@ $("delete").onclick = async () => {
   setStatus(`deleted ${name}`); loadList(); $("new").onclick();
 };
 $("add-layer").onclick = () => openChooser(addLayerFromChooser);
+$("layers").addEventListener("dblclick", (event) => {
+  const td = event.target.closest("td[data-role=name]");
+  if (!td) return;
+  const tr = td.closest("tr");
+  if (!tr || tr.dataset.index === undefined) return;  // boundary rows have no data-index
+  openChooser(replaceLayerFromChooser(Number(tr.dataset.index)));
+});
 
 async function addLayerFromChooser(picked) {
   const items = Array.isArray(picked) ? picked : [{ material_id: picked }];
@@ -502,6 +517,22 @@ async function addLayerFromChooser(picked) {
   }
   if (added) await refreshU();
   else if (items.length) setStatus("selected materials already in construction");
+}
+
+function replaceLayerFromChooser(index) {
+  return async (picked) => {
+    const it = (Array.isArray(picked) ? picked : [{ material_id: picked }])[0];
+    if (!it || !it.material_id) { setStatus("no material picked"); return; }
+    const previous = layers[index];
+    const layer = { material_id: it.material_id, thickness_m: previous ? previous.thickness_m : 0.2 };
+    layers[index] = layer;
+    selectedRow = index;
+    renderLayers();
+    await attachLayerChoices(layer);
+    renderLayers();
+    await refreshU();
+    setStatus(`replaced layer ${index + 1} material`);
+  };
 }
 document.querySelector("[data-move=up]").onclick = () => {
   if (selectedRow > 0) { [layers[selectedRow - 1], layers[selectedRow]] = [layers[selectedRow], layers[selectedRow - 1]]; selectedRow -= 1; renderLayers(); refreshU(); }

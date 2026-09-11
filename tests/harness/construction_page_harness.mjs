@@ -107,7 +107,7 @@ const sandbox = { window: globalThis.window, document: globalThis.document, fetc
 sandbox.globalThis = sandbox;
 sandbox.incomingFeed = incomingFeed;
 vm.createContext(sandbox);
-vm.runInContext(src + "\n;Object.assign(globalThis,{__get:(id)=>document.getElementById(id),__addLayer:addLayerFromChooser,__layers:()=>layers,__render:renderLayers,__evalInContext:(code)=>eval(code),__setIncoming:(items)=>{globalThis.incomingFeed.items=items;}});", sandbox);
+vm.runInContext(src + "\n;Object.assign(globalThis,{__get:(id)=>document.getElementById(id),__addLayer:addLayerFromChooser,__replace:(idx)=>replaceLayerFromChooser(idx),__layers:()=>layers,__render:renderLayers,__evalInContext:(code)=>eval(code),__setIncoming:(items)=>{globalThis.incomingFeed.items=items;}});", sandbox);
 
 const S = sandbox;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -188,5 +188,23 @@ if (!collapseOk) {
   process.exit(1);
 }
 console.log("sections fronted: OK");
+
+console.log("\n== replace: pencil badge present and replace flow converts placeholder ==");
+console.log("\n== replace flow converts placeholder ==>");
+await S.__evalInContext(
+  `layers = [{ material_id: null, thickness_m: 0.2, placeholder: { name: "Old", lambda_value: 0.05 } },
+             { material_id: "00000000-0000-0000-0000-000000000002", thickness_m: 0.15 }];
+   selectedRow = -1; lastResult = null; renderLayers();`);
+const pencil = document.getElementById("layers").innerHTML.includes('title="replace material"');
+if (!pencil) console.log("BUG REPRODUCED: pencil missing");
+await S.__replace(0)("00000000-0000-0000-0000-000000000001");
+await sleep(50);
+const replaced = S.__layers();
+console.log(`replaced material: ${replaced[0]?.material_id === "00000000-0000-0000-0000-000000000001"} | placeholder dropped: ${!replaced[0]?.placeholder} | thickness kept: ${Math.abs(replaced[0]?.thickness_m - 0.2) < 1e-9}`);
+if (!pencil || replaced[0]?.material_id !== "00000000-0000-0000-0000-000000000001" || replaced[0]?.placeholder || !Number.isFinite(replaced[0]?.thickness_m) || Math.abs(replaced[0]?.thickness_m - 0.2) > 1e-9) {
+  console.log("BUG REPRODUCED: replace flow broken");
+  process.exit(1);
+}
+console.log("replace: OK");
 
 console.log("OK");
