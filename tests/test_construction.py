@@ -7,6 +7,7 @@ from materialsdb.construction import (
     Construction,
     ConstructionLayer,
     u_value,
+    u_values_by_type,
 )
 
 
@@ -350,3 +351,40 @@ def test_to_ifc_layer_set_rejects_placeholders(store):
 
     with pytest.raises(ValueError, match="cannot export placeholder layers"):
         to_ifc_layer_set(_placeholder_construction(), store)
+
+
+def test_u_values_by_type_generic_maps_per_direction(store):
+    construction = make_construction(design_usage=None)
+    values = u_values_by_type(construction, store, ["IfcWallType", "IfcSlabType", "IfcRoofType"])
+
+    wall = u_value(make_construction("consDesignForWall"), store)
+    floor = u_value(make_construction("consDesignForFloor"), store)
+    roof = u_value(make_construction("consDesignForRoof"), store)
+    assert values == {
+        "IfcWallType": pytest.approx(wall.u),
+        "IfcSlabType": pytest.approx(floor.u),
+        "IfcRoofType": pytest.approx(roof.u),
+    }
+
+
+def test_u_values_by_type_subset_of_types(store):
+    values = u_values_by_type(make_construction(design_usage=None), store, ["IfcRoofType"])
+
+    roof = u_value(make_construction("consDesignForRoof"), store)
+    assert values == {"IfcRoofType": pytest.approx(roof.u)}
+
+
+def test_u_values_by_type_unknown_type_raises(store):
+    with pytest.raises(ValueError, match="unknown element type"):
+        u_values_by_type(make_construction(design_usage=None), store, ["IfcWallType", "Ifc CurtainType"])
+
+
+def test_u_values_by_type_none_when_lambda_unresolvable(store, mixed_xml):
+    store.refresh(paths=[_MINI_XML_PATH, mixed_xml])
+    construction = Construction(
+        name="with btk",
+        design_usage=None,
+        layers=[ConstructionLayer("00000000-0000-0000-0000-000000000004", thickness_m=0.3)],
+    )
+    values = u_values_by_type(construction, store, ["IfcWallType"])
+    assert values == {"IfcWallType": None}

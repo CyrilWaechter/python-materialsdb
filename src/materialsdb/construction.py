@@ -89,7 +89,12 @@ def _direction(design_usage: str | None) -> str:
 def u_value(construction: Construction, store_, preset: str = "ISO6946") -> UResult:
     if preset not in RESISTANCE_PRESETS:
         raise ValueError(f"unknown preset: {preset} (available: {sorted(RESISTANCE_PRESETS)})")
-    direction = _direction(construction.design_usage)
+    return _u_for_direction(construction, store_, _direction(construction.design_usage), preset)
+
+
+def _u_for_direction(construction: Construction, store_, direction: str, preset: str = "ISO6946") -> UResult:
+    if direction not in RESISTANCE_PRESETS[preset]:
+        raise ValueError(f"unknown direction: {direction}")
     rsi, rse = RESISTANCE_PRESETS[preset][direction]
     country = config.get_country()
 
@@ -126,6 +131,24 @@ def u_value(construction: Construction, store_, preset: str = "ISO6946") -> URes
 
     u = 1 / (rsi + r_sum + rse)
     return UResult(u=u, rsi=rsi, rse=rse, contributions=contributions, missing_lambda_ids=missing)
+
+
+_TYPE_TO_DIRECTION = {
+    "IfcWallType": "wall",
+    "IfcSlabType": "floor",
+    "IfcRoofType": "roof",
+}
+
+
+def u_values_by_type(construction: Construction, store_, types, preset: str = "ISO6946") -> dict[str, float | None]:
+    """U per element class, each with its own heat-flow direction
+    (wall / floor / roof Rsi-Rse). Unresolvable λ → None for that type."""
+    if preset not in RESISTANCE_PRESETS:
+        raise ValueError(f"unknown preset: {preset} (available: {sorted(RESISTANCE_PRESETS)})")
+    for cls in types:
+        if cls not in _TYPE_TO_DIRECTION:
+            raise ValueError(f"unknown element type: {cls}")
+    return {cls: _u_for_direction(construction, store_, _TYPE_TO_DIRECTION[cls], preset).u for cls in types}
 
 
 def _has_identity_pset(file, material) -> bool:
