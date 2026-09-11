@@ -579,7 +579,7 @@ git commit -m "feat(gui): replace a construction layer's material via chooser"
         assert props is not None and "ThermalTransmittance" in props
 ```
 
-- [ ] **Step 2: README candles** — under the `# Bonsai integration :` block (README.md ~line 100), extend the sentence about constructions with:
+- [ ] **Step 2: README bullets** — under the `# Bonsai integration :` block (README.md ~line 100), extend the sentence about constructions with:
 
 "- constructions push U-values into the per-type `Pset_WallCommon` / `Pset_SlabCommon` / `Pset_RoofCommon` `ThermalTransmittance`" and a second bullet line for the composer: "the construction composer lets you replace any layer's material (pencil or double-click on the material row)".
 
@@ -595,7 +595,7 @@ the construction page pushes each element type its Pset_*Common.
 - [ ] **Step 3: Run the in-Blender harness (local only)**
 
 Run: `python3 -m pytest bonsai_addon/test -q`
-Expected: PASS (5 existing tests + the new assert inside the roundtrip test green). If a blade/IFC quirk bites, fix within this task and re-run.
+Expected: PASS (existing tests + the new assert inside the roundtrip test green). If an ifcopenshell/api quirk bites, fix within this task and re-run.
 
 - [ ] **Step 4: Full gates**
 
