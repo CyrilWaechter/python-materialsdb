@@ -134,7 +134,7 @@ function renderLayers() {
       ? PickerCore.categoryColorStyle(layer.category || "Others", layer.ownColor)
       : "#fff";
     const isPlaceholder = !layer.material_id && layer.placeholder;
-    const replaceBtn = `<span data-role="replace" data-index="${index}" style="cursor:pointer;margin-left:.3rem" title="replace material">✏</span>`;
+    const replaceBtn = `<span data-role="replace" data-index="${index}" style="display:inline-block;transform:scaleX(-1) rotate(15deg);cursor:pointer;margin-left:.3rem" title="replace material">✏</span>`;
     const cell = isPlaceholder
       ? `${esc(layer.placeholder.name || "(model material)")} <span style="color:#888;font-size:.8rem">model material</span>`
       : esc(layer.display_name || layer.material_id);
@@ -156,7 +156,12 @@ function renderLayers() {
     tr.addEventListener("click", (event) => {
       if (event.target.tagName === "INPUT" || event.target.tagName === "SELECT") return;
       selectedRow = Number(tr.dataset.index);
-      renderLayers();
+      // toggle the highlight in place: rebuilding the row would destroy the
+      // dblclick target (the first click of a double-click re-rendered it,
+      // so the browser never found a common ancestor and dropped the event)
+      tbody.querySelectorAll("tr[data-index]").forEach((marked) => {
+        marked.style.background = Number(marked.dataset.index) === selectedRow ? "#eef" : "";
+      });
     });
   });
 }
