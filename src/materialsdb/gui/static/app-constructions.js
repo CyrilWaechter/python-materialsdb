@@ -134,7 +134,7 @@ function renderLayers() {
       ? PickerCore.categoryColorStyle(layer.category || "Others", layer.ownColor)
       : "#fff";
     const isPlaceholder = !layer.material_id && layer.placeholder;
-    const replaceBtn = `<span data-role="replace" data-index="${index}" style="display:inline-block;transform:scaleX(-1) rotate(15deg);cursor:pointer;margin-left:.3rem" title="replace material">✏</span>`;
+    const replaceBtn = `<span data-role="replace" data-index="${index}" style="display:inline-block;transform:scaleX(-1) rotate(75deg);cursor:pointer;margin-left:.3rem" title="replace material">✏</span>`;
     const cell = isPlaceholder
       ? `${esc(layer.placeholder.name || "(model material)")} <span style="color:#888;font-size:.8rem">model material</span>`
       : esc(layer.display_name || layer.material_id);
