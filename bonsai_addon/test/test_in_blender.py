@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 import ifcopenshell.api
+import ifcopenshell.util.element
 from bonsai import tool
 
 import bonsai_addon
@@ -229,6 +230,9 @@ def test_construction_roundtrip_and_undo(tmp_path):
         assert len(wall_types) == 1
         assert wall_types[0].Name == "Mur 20+16"
         assert wall_types[0].GlobalId
+        # U-value pset written with the wall-direction Rsi/Rse (server-side)
+        props = ifcopenshell.util.element.get_pset(wall_types[0], name="Pset_WallCommon")
+        assert props is not None and "ThermalTransmittance" in props
         layer_set = wall_types[0].HasAssociations[0].RelatingMaterial
         assert layer_set.is_a("IfcMaterialLayerSet")
         assert {round(l.LayerThickness, 3) for l in layer_set.MaterialLayers} == {0.22, 0.15}
