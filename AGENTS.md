@@ -36,7 +36,7 @@ ty check --project .                                                            
 ## Release / versioning
 
 - Version lives in `pyproject.toml` `[project] version`. Bump it there.
-- Publishing is automated: creating a GitHub release triggers `.github/workflows/pypi_publish.yml` (build + upload to PyPI).
+- Publishing is automated: creating a GitHub release triggers `.github/workflows/pypi_publish.yml` (build + upload to PyPI). CI MUST be green on master BEFORE pushing a release commit/tag — a failed release run (e.g. the `chore: release <ver>` commit) publishes broken artifacts; if the CI run for the release commit fails, fix and re-tag (delete the tag/release first). Never rely on the v0.3.0-precedent pattern of "push → tag even if red".
 
 ## Packaging / schema notes
 
