@@ -28,17 +28,20 @@ name/category; foreign psets and user edits untouched). A GUI report
 "materials changed since your last push" (driven by producer `ver` we
 already detect) could be the softer middle ground.
 
-## Parallel store ingest
+## Ingest speed (download was parallel; profiling reshaped this item)
 
-**Date opened:** 2026-09-12
+**Date updated:** 2026-09-12 — outcome: profiling showed the indexing phase
+(11.9 s over the 46-file corpus) is GIL-bound pure-Python type
+introspection in `XmlDeserialiser.from_element` (`strip_optional`,
+`get_origin`/`get_args`, `re.search` per material-per-attribute), so THREAD
+parallelism was a non-starter. Memoising `strip_optional`/`is_optional` and
+the tag-name lookup landed instead (commit this session): **11.9 s →
+≈3.9 s** (~3×). Downloads themselves were already parallel (serial
+4.0 s → 0.62 s).
 
-The download half of *Refresh cache* now runs on a bounded thread pool
-(`cache.update_producers_data`, v0.3.0+), but store ingestion is serial:
-`store.refresh` parses each producer file and inserts its materials one at
-a time (`MaterialStore._upsert_file`), even though the batch parser
-`XmlDeserialiser.from_xml_files` already parses concurrently. Ideas to
-evaluate: route refresh through the concurrent parser, and/or parallelize
-`_upsert_file` — SQLite is a single writer, so inserts need batching into
-the main thread or per-thread connections; the sha256 + deletion
-bookkeeping must stay ordered. Benchmark against pytest-benchmark before
-and after (the store suite already has benchmarks).
+**Parked:** `ProcessPoolExecutor` per producer file (returns picklable
+rows: summaries + `etree.tostring` bytes) could cut the remaining ~3.9 s
+multi-core, at the cost of pickling/fork-safety complexity and losing the
+shared objectify tree. Only revisit if the corpus grows significantly or
+≈4 s becomes productively annoying. SQLite stays the single writer in that
+design (batch from the main thread or per-thread connections).

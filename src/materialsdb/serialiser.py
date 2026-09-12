@@ -25,9 +25,31 @@ def get_xml_schema() -> str:
     return str(Path(__file__).parent / "schema/materialsdb103.xsd")
 
 
+@cache
+def cached_type_hints(cls) -> dict:
+    return typing.get_type_hints(cls)
+
+
+@cache
+def _tag_local_name(tag: str) -> str:
+    m = re.search("{.*}(.*)", tag)
+    return m.group(1) if m else tag
+
+
 def get_element_name(element: objectify.ObjectifiedElement) -> str:
-    m = re.search("{.*}(.*)", element.tag)
-    return m.group(1) if m else element.tag
+    return _tag_local_name(element.tag)
+
+
+@cache
+def _is_optional(type_hint):
+    return typing.get_origin(type_hint) is typing.Union and typing.get_args(type_hint)[1] is type(None)
+
+
+@cache
+def _strip_optional(type_hint):
+    if _is_optional(type_hint):
+        return typing.get_args(type_hint)[0]
+    return type_hint
 
 
 def create_element_maker():
@@ -47,11 +69,6 @@ def get_valid_root(tree: objectify.ObjectifiedElement) -> objectify.ObjectifiedE
             print(f"{Path(root.base).name}: Element '{attr}' is missing from '{root.tag}'")
             root.append(oem(attr, "Missing '{attr}'", {"ver": 0}))
     return root
-
-
-@cache
-def cached_type_hints(cls) -> dict:
-    return typing.get_type_hints(cls)
 
 
 class XmlDeserialiser:
@@ -93,7 +110,7 @@ class XmlDeserialiser:
             value = element.get(attrib)
             if value is None:
                 continue
-            base_class = self.strip_optional(type_hints[attrib])
+            base_class = _strip_optional(type_hints[attrib])
 
             kwargs[attrib] = base_class(value)
         for child_name in getattr(element_class, "xml_elements", ()):
@@ -127,12 +144,10 @@ class XmlDeserialiser:
         return instance
 
     def strip_optional(self, type_hint):
-        if self.is_optional(type_hint):
-            return typing.get_args(type_hint)[0]
-        return type_hint
+        return _strip_optional(type_hint)
 
     def is_optional(self, type_hint):
-        return typing.get_origin(type_hint) is typing.Union and typing.get_args(type_hint)[1] is type(None)
+        return _is_optional(type_hint)
 
     def cls_name(self, name: str) -> str:
         return name if name[0].isupper() else name.title()
