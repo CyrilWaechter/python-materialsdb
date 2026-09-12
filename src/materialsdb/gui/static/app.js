@@ -413,7 +413,7 @@ $("open").onclick = () => openSession().catch((err) => setStatus(err.message));
 $("save").onclick = () => saveSession().catch((err) => setStatus(err.message));
 $("refresh").onclick = async () => {
   const report = await api("/api/refresh", { method: "POST", body: "{}" });
-  setStatus(`cache refreshed: ${report.existing} unchanged, ${report.updated.length} updated`);
+  setStatus(`cache refreshed: ${report.downloaded} downloaded, ${report.existing} unchanged, ${report.updated.length} indexed`);
 };
 $("send-bonsai").onclick = () => sendToBonsai().catch((err) => setStatus(err.message));
 const bonsaiTarget = PickerCore.startTargetPoll(api, $("bonsai-target"), $("send-bonsai"));

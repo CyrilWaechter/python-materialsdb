@@ -138,6 +138,50 @@ def test_mutations_require_token(api):
     assert status == 403
 
 
+def test_refresh_downloads_then_uploads_cache_into_store(api, monkeypatch):
+    from materialsdb import cache, query
+    from materialsdb.store import Report as StoreReport
+
+    order = []
+    forces = []
+    cache_report = cache.Report(existing=[], updated=["a.xml", "b.xml"], deleted=["old.xml"])
+    store_report = StoreReport(existing=[1], updated=[2], deleted=[], skipped=[], duplicates=[])
+    monkeypatch.setattr(cache, "update_producers_data", lambda: order.append("download") or cache_report)
+
+    def ingest(force=False):
+        order.append("ingest")
+        forces.append(force)
+        return store_report
+
+    monkeypatch.setattr(query, "refresh", ingest)
+
+    server, state = api
+    status, payload = request(server, "POST", "/api/refresh", payload={}, token=state.token)
+
+    assert status == 200
+    assert order == ["download", "ingest"]  # cache update must precede store ingestion
+    assert forces == [False]
+    assert payload["downloaded"] == 2
+    assert payload["cache_deleted"] == 1
+    assert payload["existing"] == 1  # store report counts stay shaped as before
+
+
+def test_refresh_network_failure_reports_error_without_ingesting(api, monkeypatch):
+    from materialsdb import cache, query
+
+    ingested = []
+    monkeypatch.setattr(cache, "update_producers_data", lambda: (_ for _ in ()).throw(OSError("offline")))
+    monkeypatch.setattr(query, "refresh", lambda force=False: ingested.append(force) or None)
+
+    server, state = api
+    status, payload = request(server, "POST", "/api/refresh", payload={}, token=state.token)
+
+    assert status == 400
+    assert "cache update failed" in payload["error"]
+    assert "offline" in payload["error"]
+    assert ingested == []  # failure aborts before the store is touched
+
+
 def test_export_multi_material_roundtrip(api, tmp_path):
     import ifcopenshell
 

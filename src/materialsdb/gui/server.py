@@ -637,8 +637,15 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         self._send(200, {"ok": True})
 
     def _refresh(self, payload):
-        from materialsdb import query
+        import urllib.error
 
+        from materialsdb import cache, query
+
+        try:
+            cache_report = cache.update_producers_data()
+        except (OSError, urllib.error.URLError) as err:
+            self._send(400, {"error": f"cache update failed: {err}"})
+            return
         report = query.refresh(force=bool(payload.get("force")))
         self._send(
             200,
@@ -651,6 +658,8 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                     {"material_id": d.material_id, "kept": d.kept_source, "skipped": d.skipped_source}
                     for d in report.duplicates
                 ],
+                "downloaded": len(cache_report.updated),
+                "cache_deleted": len(cache_report.deleted),
             },
         )
 
