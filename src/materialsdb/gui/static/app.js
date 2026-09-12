@@ -459,7 +459,6 @@ async function runRefresh() {
       return;
     }
     if (job.status !== "running" && job.status !== "idle") break;
-    const pct = job.total ? `${Math.round((job.done / job.total) * 100)}%` : (job.status === "running" ? "" : "100%");
     const bar = overlay.querySelector("#refresh-bar");
     bar.style.width = job.total ? `${Math.max(4, Math.round((job.done / job.total) * 100))}%` : "4%";
     overlay.querySelector("#refresh-label").textContent = job.label || "…";
@@ -473,7 +472,7 @@ async function runRefresh() {
     const r = job.report;
     setStatus(`cache refreshed: ${r.downloaded} downloaded, ${r.existing} unchanged, ${r.updated.length} indexed`);
   } else {
-    setStatus("refresh interrupted");
+    setStatus("refresh still running in background — reopening it will show its progress");
   }
   await loadMaterials();
   await syncUpdatesBanner();
