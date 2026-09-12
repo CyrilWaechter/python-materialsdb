@@ -33,7 +33,7 @@ def cache_env(tmp_path, monkeypatch):
     # defaults are bound at def time, so patch __defaults__ too
     single = [cache.MATERIALSDBINDEXURLLIST[0]]
     monkeypatch.setattr(cache, "MATERIALSDBINDEXURLLIST", single)
-    monkeypatch.setattr(cache.update_producers_data, "__defaults__", (single, None))
+    monkeypatch.setattr(cache.update_producers_data, "__defaults__", (single, None, 8))
     monkeypatch.setattr(cache.updates_available, "__defaults__", (single,))
     recorded: _Recorded = {"urls": [], "dests": [], "index": INDEX_XML}
 
@@ -57,9 +57,11 @@ def test_first_refresh_downloads_all_with_global_total(cache_env):
         on_progress=lambda done, total, name: progress.append((done, total, name)) or False
     )
 
-    assert recorded["urls"] == ["https://x.org/a.xml", "https://x.org/b.xml"]
-    assert progress == [(1, 2, "a.xml"), (2, 2, "b.xml")]
-    assert [p.name for p in report.updated] == ["a.xml", "b.xml"]
+    assert set(recorded["urls"]) == {"https://x.org/a.xml", "https://x.org/b.xml"}
+    assert [p[0] for p in progress] == [1, 2]  # monotonic done
+    assert {p[1] for p in progress} == {2}  # global total reached before any download finished
+    assert {p[2] for p in progress} == {"a.xml", "b.xml"}
+    assert {p.name for p in report.updated} == {"a.xml", "b.xml"}
     assert report.existing == []
     assert (cache_dir / "Producers" / "a.xml").exists()  # downloads land in Producers dir
     assert (cache_dir / "ProducerIndex.xml").exists()  # new index persisted
@@ -100,9 +102,9 @@ def test_outdated_single_producer_updates_with_total_one(cache_env):
         on_progress=lambda done, total, name: progress.append((done, total, name)) or False
     )
 
-    assert recorded["urls"] == ["https://x.org/a.xml"]
+    assert recorded["urls"] == ["https://x.org/a.xml"]  # single job — deterministic
     assert progress == [(1, 1, "a.xml")]
-    assert [p.name for p in record.updated] == ["a.xml"]
+    assert {p.name for p in record.updated} == {"a.xml"}
     assert [p.name for p in record.deleted] == ["a.xml"]  # stale file removed before re-download
     assert [p.name for p in record.existing] == ["b.xml"]
 
@@ -128,7 +130,8 @@ def test_cancel_stops_between_downloads(cache_env):
     def cancel_after_first(done, total, name):
         return done >= 1  # truthy → abort
 
-    report = cache.update_producers_data(on_progress=cancel_after_first)
+    # single worker: b.html cannot start before the callback runs
+    report = cache.update_producers_data(on_progress=cancel_after_first, max_workers=1)
 
     assert recorded["urls"] == ["https://x.org/a.xml"]  # second download never starts
     assert [p.name for p in report.updated] == ["a.xml"]

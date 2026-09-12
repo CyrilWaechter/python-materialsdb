@@ -2,6 +2,7 @@ import os
 import pathlib
 import urllib.request
 from collections import namedtuple
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from lxml import etree
 
@@ -85,25 +86,77 @@ def _plan_index(index):
     return _IndexPlan(index, new_index, unchanged, todos)
 
 
-def update_producers_data(url_list=MATERIALSDBINDEXURLLIST, on_progress=None):
-    """on_progress(done, total, name) is called after each producer download
-    with a global running total; returning a truthy value stops the update
-    between two downloads (the partial Report is returned as-is)."""
+def update_producers_data(url_list=MATERIALSDBINDEXURLLIST, on_progress=None, max_workers: int = 8):
+    """Update the cached producer files from the index URLs.
+
+    Downloads run on a bounded thread pool (max_workers). on_progress(done,
+    total, name) is called once per completed download from the calling
+    thread with a monotonic running total; returning a truthy value stops
+    NEW submissions (queued jobs are abandoned, in-flight ones finish but
+    no longer count toward the partial Report). A download error stops the
+    run and the first exception is re-raised after the pool drains.
+    """
     plans = [_plan_index(index) for index in url_list]
-    total = sum(len(plan.todos) for plan in plans)
-    existing, updated, deleted = [], [], []
+    jobs = [
+        (plan, company, cached_producer, producer_path)
+        for plan in plans
+        for (company, cached_producer, producer_path) in plan.todos
+    ]
+    total = len(jobs)
+    workers = max(1, min(int(max_workers), total or 1))
+
+    existing: list = []
+    updated: list = []
+    deleted: list = []
     done = 0
+    cancel_requested = False
+    failure = None
+
+    def _download(job):
+        _, company, cached_producer, producer_path = job
+        deleted_path = None
+        if cached_producer is not None:
+            deleted_path = get_producers_dir() / pathlib.Path(cached_producer.get("href")).name
+            deleted_path.unlink(True)
+        urllib.request.urlretrieve(company.get("href"), producer_path)
+        return deleted_path
+
+    pool = ThreadPoolExecutor(max_workers=workers)
+    pending = list(jobs)  # pops from the FRONT, submission order preserved
+    futures: dict = {}
+    try:
+        while futures or pending:
+            while pending and len(futures) < workers:
+                job = pending.pop(0)
+                futures[pool.submit(_download, job)] = job
+            if not futures:
+                break
+            ready, _ = wait(set(futures), return_when=FIRST_COMPLETED)
+            for future in ready:
+                job = futures.pop(future)
+                try:
+                    deleted_path = future.result()
+                except Exception as err:  # noqa: BLE001 - re-raised below, caller decides
+                    if failure is None:
+                        failure = err
+                    break
+                if deleted_path is not None:
+                    deleted.append(deleted_path)
+                updated.append(job[3])
+                done += 1
+                if on_progress is not None and on_progress(done, total, pathlib.Path(job[3]).name):
+                    cancel_requested = True
+                    break
+            if cancel_requested or failure is not None:
+                break
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+    if failure is not None:
+        raise failure
+    if cancel_requested:
+        return Report(existing, updated, deleted)
     for plan in plans:
-        for company, cached_producer, producer_path in plan.todos:
-            if cached_producer is not None:
-                cached_path = get_producers_dir() / pathlib.Path(cached_producer.get("href")).name
-                deleted.append(cached_path)
-                cached_path.unlink(True)
-            urllib.request.urlretrieve(company.get("href"), producer_path)
-            updated.append(producer_path)
-            done += 1
-            if on_progress is not None and on_progress(done, total, pathlib.Path(company.get("href")).name):
-                return Report(existing, updated, deleted)
         if plan.todos:
             plan.new_index.write(str(get_cached_index_path(plan.index)))
         existing.extend(plan.unchanged)
