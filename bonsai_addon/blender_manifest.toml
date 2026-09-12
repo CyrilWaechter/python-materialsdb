@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "materialsdb_listener"
-version = "0.3.0"
+version = "0.3.1"
 name = "materialsdb listener"
 tagline = "Receive materials pushed from the local materialsdb picker"
 maintainer = "Cyril Waechter <cyrwae@hotmail.com>"
