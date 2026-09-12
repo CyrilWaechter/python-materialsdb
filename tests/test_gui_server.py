@@ -138,48 +138,169 @@ def test_mutations_require_token(api):
     assert status == 403
 
 
-def test_refresh_downloads_then_uploads_cache_into_store(api, monkeypatch):
+def _wait_for_status(server, token, want, timeout=10.0):
+    deadline = time.time() + timeout
+    payload = None
+    while time.time() < deadline:
+        status, payload = request(server, "GET", "/api/refresh/status")
+        assert status == 200
+        if payload["status"] == want:
+            return payload
+        time.sleep(0.05)
+    pytest.fail(f"refresh job never reached {want!r}: {payload}")
+
+
+def test_refresh_job_completes_and_clears_updates(api, monkeypatch):
     from materialsdb import cache, query
     from materialsdb.store import Report as StoreReport
 
-    order = []
-    forces = []
-    cache_report = cache.Report(existing=[], updated=["a.xml", "b.xml"], deleted=["old.xml"])
-    store_report = StoreReport(existing=[1], updated=[2], deleted=[], skipped=[], duplicates=[])
-    monkeypatch.setattr(cache, "update_producers_data", lambda: order.append("download") or cache_report)
+    ingest_forces = []
 
-    def ingest(force=False):
-        order.append("ingest")
-        forces.append(force)
+    def fake_download(on_progress=None):
+        if on_progress is not None:
+            on_progress(1, 2, "a.xml")
+            on_progress(2, 2, "b.xml")
+        return cache.Report(existing=[], updated=["a.xml", "b.xml"], deleted=[])
+
+    store_report = StoreReport(existing=[1], updated=[2], deleted=[], skipped=[], duplicates=[])
+
+    def fake_ingest(force=False):
+        ingest_forces.append(force)
         return store_report
 
-    monkeypatch.setattr(query, "refresh", ingest)
+    monkeypatch.setattr(cache, "update_producers_data", fake_download)
+    monkeypatch.setattr(query, "refresh", fake_ingest)
 
     server, state = api
-    status, payload = request(server, "POST", "/api/refresh", payload={}, token=state.token)
-
+    state.updates_available = True
+    status, _ = request(server, "POST", "/api/refresh", payload={}, token=state.token)
     assert status == 200
-    assert order == ["download", "ingest"]  # cache update must precede store ingestion
-    assert forces == [False]
-    assert payload["downloaded"] == 2
-    assert payload["cache_deleted"] == 1
-    assert payload["existing"] == 1  # store report counts stay shaped as before
+
+    payload = _wait_for_status(server, state.token, "complete")
+    assert ingest_forces == [False]
+    assert payload["report"]["downloaded"] == 2
+    assert payload["report"]["updated"] == [str(p) for p in store_report.updated]
+    assert state.updates_available is False  # successful refresh clears the flag
 
 
-def test_refresh_network_failure_reports_error_without_ingesting(api, monkeypatch):
+def test_refresh_network_failure_reports_error(api, monkeypatch):
     from materialsdb import cache, query
 
     ingested = []
-    monkeypatch.setattr(cache, "update_producers_data", lambda: (_ for _ in ()).throw(OSError("offline")))
+
+    def boom(on_progress=None):
+        raise OSError("offline")
+
+    monkeypatch.setattr(cache, "update_producers_data", boom)
     monkeypatch.setattr(query, "refresh", lambda force=False: ingested.append(force) or None)
 
     server, state = api
-    status, payload = request(server, "POST", "/api/refresh", payload={}, token=state.token)
+    status, _ = request(server, "POST", "/api/refresh", payload={}, token=state.token)
+    assert status == 200
 
-    assert status == 400
+    payload = _wait_for_status(server, state.token, "error")
     assert "cache update failed" in payload["error"]
     assert "offline" in payload["error"]
-    assert ingested == []  # failure aborts before the store is touched
+    assert ingested == []  # failure aborts before ingestion
+    assert state.refresh_job["status"] == "error"
+
+
+def test_refresh_second_start_while_running_conflicts(api, monkeypatch):
+    from materialsdb import cache, query
+
+    running = threading.Event()
+    release = threading.Event()
+
+    def slow_download(on_progress=None):
+        running.set()
+        release.wait(5.0)
+        return cache.Report(existing=[], updated=[], deleted=[])
+
+    monkeypatch.setattr(cache, "update_producers_data", slow_download)
+    monkeypatch.setattr(query, "refresh", lambda force=False: None)
+
+    server, state = api
+    status, _ = request(server, "POST", "/api/refresh", payload={}, token=state.token)
+    assert status == 200
+    assert running.wait(5.0)
+
+    status, payload = request(server, "POST", "/api/refresh", payload={}, token=state.token)
+    assert status == 409
+    assert payload["error"] == "already running"
+
+    release.set()
+    _wait_for_status(server, state.token, "complete")
+
+
+def test_refresh_cancel_stops_before_ingest(api, monkeypatch):
+    from materialsdb import cache, query
+
+    ingested = []
+
+    def fake_download(on_progress=None):
+        if on_progress:
+            if on_progress(1, 2, "a.xml"):
+                return cache.Report([], ["a.xml"], [])
+            # the fake download is instant otherwise; hold mid-download
+            # (bounded) until the cancel request lands so the race is gone
+            deadline = time.time() + 5.0
+            while time.time() < deadline and not on_progress(1, 2, "a.xml"):
+                time.sleep(0.05)
+            if on_progress(1, 2, "a.xml"):
+                return cache.Report([], ["a.xml"], [])
+            if on_progress(2, 2, "b.xml"):
+                return cache.Report([], ["a.xml", "b.xml"], [])
+        return cache.Report(existing=[], updated=["a.xml", "b.xml"], deleted=[])
+
+    monkeypatch.setattr(cache, "update_producers_data", fake_download)
+    monkeypatch.setattr(query, "refresh", lambda force=False: ingested.append(force) or None)
+
+    server, state = api
+    status, _ = request(server, "POST", "/api/refresh", payload={}, token=state.token)
+    assert status == 200
+
+    deadline = time.time() + 5.0
+    cancelled = False
+    while time.time() < deadline and not cancelled:
+        time.sleep(0.05)
+        job = state.refresh_job
+        if job and job["done"] >= 1:
+            status2, _ = request(server, "POST", "/api/refresh/cancel", payload={}, token=state.token)
+            if status2 == 200:
+                cancelled = True
+    assert cancelled
+
+    payload = _wait_for_status(server, state.token, "cancelled")
+    assert ingested == []
+    assert payload["done"] >= 1
+
+
+def test_refresh_updates_endpoint_and_no_job(api, monkeypatch):
+    server, state = api
+    status, payload = request(server, "GET", "/api/updates")
+    assert status == 200 and payload["updates_available"] is False
+
+    state.updates_available = True
+    status, payload = request(server, "GET", "/api/updates")
+    assert payload["updates_available"] is True
+
+    status, payload = request(server, "GET", "/api/refresh/status")
+    assert status == 200 and payload["status"] == "idle"
+
+
+def test_make_server_spawns_no_network_check(api, monkeypatch):
+    from materialsdb import cache
+
+    calls = []
+    monkeypatch.setattr(cache, "updates_available", lambda: calls.append(1) or False)
+
+    from materialsdb.gui.server import GuiState, make_server
+
+    server = make_server(state=GuiState())
+    # serve_forever() was never started, so shutdown() would block forever;
+    # closing the socket is all the cleanup needed here
+    server.server_close()
+    assert calls == []  # the update check belongs to __main__, never to make_server
 
 
 def test_export_multi_material_roundtrip(api, tmp_path):

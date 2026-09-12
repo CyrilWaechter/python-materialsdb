@@ -3,6 +3,7 @@
 import http.server
 import json
 import secrets
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -28,6 +29,74 @@ def _resolve_display_name(names, lang):
     return str(names.get(lang) or names.get("") or "")
 
 
+def _progress_cb(state):
+    def on_progress(done, total, name):
+        job = state.refresh_job
+        job.update(done=done, total=total, label=f"downloading producer files {done}/{total} ({name})")
+        return bool(job.get("cancelled"))
+
+    return on_progress
+
+
+def _refresh_worker(state, force):
+    import urllib.error
+
+    from materialsdb import cache, query
+
+    state.refresh_job = {
+        "status": "running",
+        "done": 0,
+        "total": 0,
+        "label": "checking materialsdb.org",
+        "error": None,
+        "report": None,
+        "cancelled": False,
+    }
+    try:
+        cache.update_producers_data(on_progress=_progress_cb(state))
+    except (OSError, urllib.error.URLError) as err:
+        state.refresh_job.update(status="error", error=f"cache update failed: {err}")
+        return
+    if state.refresh_job.get("cancelled"):
+        state.refresh_job.update(status="cancelled")
+        return
+    state.refresh_job.update(label="indexing…")
+    try:
+        report = query.refresh(force=force)
+    except Exception as err:  # noqa: BLE001 - the job must never raise into the void
+        state.refresh_job.update(status="error", error=str(err))
+        return
+    if state.refresh_job.get("cancelled"):
+        state.refresh_job.update(status="cancelled")
+        return
+    downloaded = state.refresh_job["done"]
+    # successful refresh clears the flag; the startup check in __main__ or the
+    # next refresh re-populates it — never re-check the network here
+    state.updates_available = False
+    # query.refresh normally returns a store Report; tolerate a falsy one
+    existing = list(getattr(report, "existing", None) or ())
+    updated = list(getattr(report, "updated", None) or ())
+    deleted = list(getattr(report, "deleted", None) or ())
+    skipped = list(getattr(report, "skipped", None) or ())
+    duplicates = list(getattr(report, "duplicates", None) or ())
+    state.refresh_job = {
+        "status": "complete",
+        "done": 0,
+        "total": 0,
+        "label": "",
+        "error": None,
+        "cancelled": False,
+        "report": {
+            "existing": len(existing),
+            "updated": [str(p) for p in updated],
+            "deleted": len(deleted),
+            "skipped": len(skipped),
+            "duplicates": len(duplicates),
+            "downloaded": downloaded,
+        },
+    }
+
+
 class GuiState:
     def __init__(self, store=None):
         self.token = secrets.token_urlsafe(16)
@@ -38,6 +107,9 @@ class GuiState:
         self.listeners = {}
         # constructions pushed from a model (newest first, capped at 20)
         self.incoming = []
+        self.updates_available = False
+        # status: running|complete|error|cancelled; report: old 200 payload
+        self.refresh_job: dict | None = None
 
     def resolve_store(self):
         if self.store is not None:
@@ -386,6 +458,12 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/api/composer/incoming":
             self._send(200, {"incoming": self.state.incoming})
             return
+        if parsed.path == "/api/refresh/status":
+            self._refresh_status()
+            return
+        if parsed.path == "/api/updates":
+            self._send(200, {"updates_available": self.state.updates_available})
+            return
         if parsed.path.startswith("/api/constructions/"):
             from materialsdb import construction as cm
 
@@ -482,6 +560,8 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._config(payload)
             elif parsed.path == "/api/refresh":
                 self._refresh(payload)
+            elif parsed.path == "/api/refresh/cancel":
+                self._refresh_cancel()
             elif parsed.path == "/api/u_value":
                 self._u_value(store_, payload)
             elif parsed.path == "/api/export-construction":
@@ -637,31 +717,35 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         self._send(200, {"ok": True})
 
     def _refresh(self, payload):
-        import urllib.error
-
-        from materialsdb import cache, query
-
-        try:
-            cache_report = cache.update_producers_data()
-        except (OSError, urllib.error.URLError) as err:
-            self._send(400, {"error": f"cache update failed: {err}"})
+        job = self.state.refresh_job
+        if job is not None and job["status"] == "running":
+            self._send(409, {"error": "already running"})
             return
-        report = query.refresh(force=bool(payload.get("force")))
-        self._send(
-            200,
-            {
-                "existing": len(report.existing),
-                "updated": [str(p) for p in report.updated],
-                "deleted": [str(p) for p in report.deleted],
-                "skipped": [str(p) for p in report.skipped],
-                "duplicates": [
-                    {"material_id": d.material_id, "kept": d.kept_source, "skipped": d.skipped_source}
-                    for d in report.duplicates
-                ],
-                "downloaded": len(cache_report.updated),
-                "cache_deleted": len(cache_report.deleted),
-            },
-        )
+        force = bool(payload.get("force"))
+        threading.Thread(target=_refresh_worker, args=(self.state, force), daemon=True).start()
+        self._send(200, {"started": True})
+
+    def _refresh_cancel(self):
+        job = self.state.refresh_job
+        if job is None or job["status"] != "running":
+            self._send(404, {"error": "no refresh running"})
+            return
+        job["cancelled"] = True
+        self._send(200, {"ok": True})
+
+    def _refresh_status(self):
+        job = self.state.refresh_job
+        if job is None:
+            job = {
+                "status": "idle",
+                "done": 0,
+                "total": 0,
+                "label": "",
+                "error": None,
+                "report": None,
+                "cancelled": False,
+            }
+        self._send(200, dict(job))
 
     def _construction_save(self, store_, parsed, payload):
         from materialsdb import construction as cm

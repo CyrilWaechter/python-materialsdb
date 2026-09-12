@@ -1,10 +1,20 @@
 """Entry point for the materialsdb picker web UI."""
 
 import argparse
+import threading
 import webbrowser
 
 from materialsdb.gui.discovery import remove_listener_info, write_listener_info
 from materialsdb.gui.server import make_server
+
+
+def _startup_update_check(state):
+    from materialsdb import cache
+
+    try:
+        state.updates_available = cache.updates_available()
+    except Exception:  # noqa: BLE001, S110 - advisory flag: quiet on network errors
+        pass
 
 
 def main():
@@ -16,6 +26,7 @@ def main():
     server = make_server(port=args.port)
     url = f"http://127.0.0.1:{server.server_address[1]}"
     write_listener_info(server.server_address[1], server.gui_state.token)
+    threading.Thread(target=_startup_update_check, args=(server.gui_state,), daemon=True).start()
     print(f"materialsdb picker on {url} (Ctrl+C to stop)")
     if not args.no_browser:
         webbrowser.open(url)
