@@ -205,6 +205,36 @@ def test_refresh_network_failure_reports_error(api, monkeypatch):
     assert state.refresh_job["status"] == "error"
 
 
+def test_refresh_unexpected_download_error_ends_in_error_not_wedged(api, monkeypatch):
+    """A non-network exception (e.g. corrupt cached index -> XMLSyntaxError)
+    must still transition the job to "error": a wedged "running" job would
+    make every subsequent refresh 409 forever."""
+    from materialsdb import cache, query
+
+    ingested = []
+
+    def corrupt(on_progress=None):
+        raise ValueError("corrupt")
+
+    monkeypatch.setattr(cache, "update_producers_data", corrupt)
+    monkeypatch.setattr(query, "refresh", lambda force=False: ingested.append(force) or None)
+
+    server, state = api
+    status, _ = request(server, "POST", "/api/refresh", payload={}, token=state.token)
+    assert status == 200
+
+    payload = _wait_for_status(server, state.token, "error")
+    assert "unexpected error" in payload["error"]
+    assert "corrupt" in payload["error"]
+    assert ingested == []
+    # a second status poll confirms the job did not stick in "running"
+    status, payload = request(server, "GET", "/api/refresh/status")
+    assert status == 200 and payload["status"] == "error"
+    # and a new refresh can be started (not 409)
+    status, payload = request(server, "POST", "/api/refresh", payload={}, token=state.token)
+    assert status == 200 and payload == {"started": True}
+
+
 def test_refresh_second_start_while_running_conflicts(api, monkeypatch):
     from materialsdb import cache, query
 

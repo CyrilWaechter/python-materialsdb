@@ -57,6 +57,9 @@ def _refresh_worker(state, force):
     except (OSError, urllib.error.URLError) as err:
         state.refresh_job.update(status="error", error=f"cache update failed: {err}")
         return
+    except Exception as err:  # noqa: BLE001 - a crashing job must never stay "running"
+        state.refresh_job.update(status="error", error=f"unexpected error: {err}")
+        return
     if state.refresh_job.get("cancelled"):
         state.refresh_job.update(status="cancelled")
         return
@@ -731,6 +734,12 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             self._send(404, {"error": "no refresh running"})
             return
         job["cancelled"] = True
+        if self.state.refresh_job is not job:
+            # the worker completed between our check and the flag write:
+            # the completed job must not be marked cancelled
+            job["cancelled"] = False
+            self._send(404, {"error": "no refresh running"})
+            return
         self._send(200, {"ok": True})
 
     def _refresh_status(self):
