@@ -1,0 +1,26 @@
+{
+  "version": "v1",
+  "blocklist": [],
+  "data": [
+    {
+      "schema_version": "1.0.0",
+      "id": "materialsdb_listener",
+      "name": "materialsdb listener",
+      "tagline": "Receive materials pushed from the local materialsdb picker",
+      "version": "0.3.1",
+      "type": "add-on",
+      "maintainer": "Cyril Waechter <cyrwae@hotmail.com>",
+      "license": [
+        "SPDX:GPL-3.0-or-later"
+      ],
+      "blender_version_min": "4.2.0",
+      "permissions": [
+        "files",
+        "network"
+      ],
+      "archive_url": "./materialsdb_listener-0.3.1.zip",
+      "archive_size": 14853,
+      "archive_hash": "sha256:6a7cf1e501cd49b56d853879b763998e412c110e3459e9136d18968b3225bcf2"
+    }
+  ]
+}
