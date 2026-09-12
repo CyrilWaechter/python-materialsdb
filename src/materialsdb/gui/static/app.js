@@ -119,6 +119,11 @@ async function loadMaterials() {
   const params = new URLSearchParams();
   params.set("lang", lang);
   const { materials } = await api(`/api/materials?${params}`);
+  const hint = document.getElementById("hint");
+  if (hint) {
+    hint.style.display = materials.length ? "none" : "block";
+    hint.textContent = "No materials cached yet — click Refresh to download from materialsdb.org";
+  }
   allMaterials = materials;
   renderHeader();
   applyModel();
@@ -407,14 +412,72 @@ async function sendToBonsai() {
 
 function setStatus(text) { $("status").textContent = text; return text; }
 
+async function syncUpdatesBanner() {
+  const banner = document.getElementById("updates");
+  if (!banner) return;
+  try {
+    const { updates_available } = await api("/api/updates");
+    banner.style.display = updates_available ? "inline" : "none";
+  } catch {}
+}
+
 $("export").onclick = () => pickIds("export").catch((err) => setStatus(err.message));
 $("pick").onclick = () => pickIds("pick").catch((err) => setStatus(err.message));
 $("open").onclick = () => openSession().catch((err) => setStatus(err.message));
 $("save").onclick = () => saveSession().catch((err) => setStatus(err.message));
-$("refresh").onclick = async () => {
-  const report = await api("/api/refresh", { method: "POST", body: "{}" });
-  setStatus(`cache refreshed: ${report.downloaded} downloaded, ${report.existing} unchanged, ${report.updated.length} indexed`);
-};
+$("refresh").onclick = runRefresh;
+
+async function runRefresh() {
+  const existing = document.getElementById("refresh-overlay");
+  if (existing) return;
+  const overlay = document.createElement("div");
+  overlay.id = "refresh-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:1000";
+  overlay.innerHTML = `<div style="background:#fff;border-radius:6px;padding:1rem 1.2rem;min-width:22rem;display:flex;flex-direction:column;gap:.6rem">` +
+    `<b>refreshing materialsdb cache</b>` +
+    `<div style="height:.6rem;background:#eee;border-radius:.3rem;overflow:hidden"><div id="refresh-bar" style="height:100%;width:0;background:#468;border-radius:.3rem;transition:width .3s"></div></div>` +
+    `<div style="display:flex;justify-content:space-between;align-items:center"><span id="refresh-label" style="color:#666">starting…</span>` +
+    `<button id="refresh-cancel">cancel</button></div></div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#refresh-cancel").onclick = () =>
+    api("/api/refresh/cancel", { method: "POST", body: "{}" }).catch(() => {});
+  try {
+    await api("/api/refresh", { method: "POST", body: "{}" });
+  } catch (err) {
+    overlay.remove();
+    setStatus(err.message);
+    return;
+  }
+  let job = null;
+  for (let i = 0; i < 200; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      job = await api("/api/refresh/status");
+    } catch {
+      overlay.remove();
+      setStatus("server unreachable while refreshing");
+      return;
+    }
+    if (job.status !== "running" && job.status !== "idle") break;
+    const pct = job.total ? `${Math.round((job.done / job.total) * 100)}%` : (job.status === "running" ? "" : "100%");
+    const bar = overlay.querySelector("#refresh-bar");
+    bar.style.width = job.total ? `${Math.max(4, Math.round((job.done / job.total) * 100))}%` : "4%";
+    overlay.querySelector("#refresh-label").textContent = job.label || "…";
+  }
+  overlay.remove();
+  if (job && job.status === "cancelled") {
+    setStatus(`refresh cancelled (${job.done}/${job.total || "?"} downloaded)`);
+  } else if (job && job.status === "error") {
+    setStatus(job.error || "refresh failed");
+  } else if (job && job.report) {
+    const r = job.report;
+    setStatus(`cache refreshed: ${r.downloaded} downloaded, ${r.existing} unchanged, ${r.updated.length} indexed`);
+  } else {
+    setStatus("refresh interrupted");
+  }
+  await loadMaterials();
+  await syncUpdatesBanner();
+}
 $("send-bonsai").onclick = () => sendToBonsai().catch((err) => setStatus(err.message));
 const bonsaiTarget = PickerCore.startTargetPoll(api, $("bonsai-target"), $("send-bonsai"));
 
@@ -429,12 +492,14 @@ $("lang").addEventListener("change", async () => {
   await api("/api/config", { method: "POST", body: JSON.stringify({ lang }) });
   detailCache.clear();
   await loadMaterials();
+  await syncUpdatesBanner();
 });
 
 $("country").addEventListener("change", async () => {
   await api("/api/config", { method: "POST", body: JSON.stringify({ country: $("country").value }) });
   detailCache.clear();
   await loadMaterials();
+  await syncUpdatesBanner();
 });
 
 $("preview").onclick = async () => {
@@ -449,3 +514,4 @@ document.getElementById("settings-tab").addEventListener("click", (e) => {
 });
 
 loadMaterials();
+syncUpdatesBanner();

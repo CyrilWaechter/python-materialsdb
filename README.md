@@ -71,8 +71,9 @@ PYTHONPATH=src python3 -m materialsdb.gui
 The materials index uses schema v2: the first launch after upgrading rebuilds
 it automatically (previous index is discarded — source of truth is your cached
 XML). *Refresh cache* downloads any newer producer files from
-materialsdb.org and re-ingests them — on a fresh machine it populates the
-empty list after one click.
+materialsdb.org and re-ingests them — on a fresh machine it fills the
+empty list after one click, behind a progress dialog (cancellable). The
+app shows a notice when updates are available on materialsdb.org.
 
 Browse, sort and filter all cached materials; multi-select then either export
 a standalone `.ifc`, or open one of your own `.ifc` files and append the
