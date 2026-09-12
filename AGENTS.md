@@ -33,9 +33,10 @@ ty check --project .                                                            
 - `example_v103.xml` is **not tracked by git** — on a fresh clone tests fail until you supply it.
 - `tests/_stale_materialsdb.disabled` is a symlink to `../src/materialsdb/` kept out of import paths — never restore the original name (`tests/materialsdb`).
 
-## Release / versioning
+## Releases / versioning
 
 - Version lives in `pyproject.toml` `[project] version`. Bump it there.
+- **NEVER `git push` without the user's explicit go-ahead, ever** — not for feature commits, not to unblock red CI. All checks (ruff check, ruff format --check, ty, full pytest — CI parity) MUST be green locally before any push is even proposed. (Lesson, 2026-09-12: pushed `f9c046d` without instruction and without full verification-induced-red-master.)
 - Publishing is automated: creating a GitHub release triggers `.github/workflows/pypi_publish.yml` (build + upload to PyPI). CI MUST be green on master BEFORE pushing a release commit/tag — a failed release run (e.g. the `chore: release <ver>` commit) publishes broken artifacts; if the CI run for the release commit fails, fix and re-tag (delete the tag/release first). Never rely on the v0.3.0-precedent pattern of "push → tag even if red".
 
 ## Packaging / schema notes
