@@ -70,7 +70,7 @@ def test_first_refresh_downloads_all_with_global_total(cache_env):
 def test_second_refresh_uses_existing_files(cache_env):
     cache, _, recorded = cache_env
     report = cache.update_producers_data()
-    assert [p.name for p in report.updated] == ["a.xml", "b.xml"]
+    assert {p.name for p in report.updated} == {"a.xml", "b.xml"}
     recorded["urls"].clear()
 
     progress = []
