@@ -8,6 +8,7 @@ pytest.importorskip("ifcopenshell")
 import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.util.element
+import ifcopenshell.util.representation
 
 from materialsdb.gui.listener import build_add_materials_payload
 from materialsdb.store import MaterialStore
@@ -43,6 +44,31 @@ def _payload(store_):
     payload, missing = build_add_materials_payload(store_, [{"id": "00000000-0000-0000-0000-000000000001"}])
     assert missing == []
     return payload
+
+
+def _file_with_body_context():
+    """A scratch IFC4 file carrying a Model/Body subcontext so _apply_style
+    proceeds (plain scratch files have no context and skip styling)."""
+    file = ifcopenshell.file(schema="IFC4")
+    model = file.create_entity(
+        "IfcGeometricRepresentationContext",
+        ContextIdentifier=None,
+        ContextType="Model",
+        CoordinateSpaceDimension=3,
+        Precision=1e-5,
+    )
+    file.create_entity(
+        "IfcGeometricRepresentationSubContext",
+        ContextIdentifier="Body",
+        ContextType="Model",
+        ParentContext=model,
+        TargetView="MODEL_VIEW",
+    )
+    return file
+
+
+def _shading_of(style):
+    return next(item for item in style.Styles if item.is_a("IfcSurfaceStyleShading"))
 
 
 def test_apply_creates_materials_psets_layers(store):
@@ -89,6 +115,57 @@ def test_apply_add_materials_creates_schema_valid_entities(store):
     assert len(file.by_type("IfcMaterialLayerSet")) == 2
     identity = [p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
     assert len(identity) == 2
+
+
+def test_apply_add_materials_writes_valid_surface_style(store):
+    """Regression: style.add_style + add_surface_style left IfcSurfaceStyle
+    with Styles=$ when add_surface_style raised, and the malformed entity was
+    later reused via assign_material_style (crash on next model open). The
+    style must be built in one shot and land on the material."""
+    file = _file_with_body_context()
+
+    apply_add_materials(file, _payload(store))
+
+    styles = file.by_type("IfcSurfaceStyle")
+    assert styles, "the payload carries a colour, so a style must exist"
+    assert all(style.Styles for style in styles)  # IFC4 Styles is SET [1:?], never NULL/empty
+    assert _shading_of(styles[0]).SurfaceColour is not None
+
+    material = file.by_type("IfcMaterial")[0]
+    assert material.HasRepresentation, "the style must be assigned to the material"
+    styled_rep = material.HasRepresentation[0].Representations[0]
+    body = ifcopenshell.util.representation.get_context(file, "Model", "Body", "MODEL_VIEW")
+    assert styled_rep.ContextOfItems == body
+    styled_items = [item for item in styled_rep.Items if item.is_a("IfcStyledItem")]
+    assert any(styles[0] in item.Styles for item in styled_items)
+
+
+def test_apply_add_materials_shares_one_style_per_color(store):
+    file = _file_with_body_context()
+
+    apply_add_materials(file, _payload(store))  # both layers share colour 16711680
+
+    assert len(file.by_type("IfcSurfaceStyle")) == 1
+    assert len(file.by_type("IfcStyledItem")) == 2  # one assignment per material
+
+
+def test_apply_never_reuses_malformed_surface_style(store):
+    file = _file_with_body_context()
+    malformed = ifcopenshell.api.run("style.add_style", file, name="color 16711680")
+    assert not malformed.Styles
+
+    apply_add_materials(file, _payload(store))
+
+    assigned = [
+        item
+        for rep in file.by_type("IfcMaterialDefinitionRepresentation")
+        for representation in rep.Representations
+        for item in representation.Items
+        if item.is_a("IfcStyledItem")
+    ]
+    assert assigned, "a styled item must be created"
+    assert all(malformed not in item.Styles for item in assigned)
+    assert any(style.Styles and style.Name == "color 16711680" for style in file.by_type("IfcSurfaceStyle"))
 
 
 def test_apply_is_idempotent(store):

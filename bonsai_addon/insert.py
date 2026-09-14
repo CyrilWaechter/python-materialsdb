@@ -9,6 +9,7 @@ import math
 
 import ifcopenshell.api
 import ifcopenshell.util.element
+import ifcopenshell.util.representation
 
 _THERMAL_TRANSMITTANCE_PSET = {
     "IfcWallType": "Pset_WallCommon",
@@ -82,36 +83,46 @@ def _add_property_psets(file, material, psets):
 
 def _apply_style(file, material_entry, material):
     """Best-effort schema-valid material styling; needs a representation
-    context (bonsai files have one, scratch CI files do not)."""
+    context (bonsai files have one, scratch CI files do not).
+
+    The IfcSurfaceStyle is built in one shot: creating it via
+    style.add_style leaves Styles=$ (invalid, SET [1:?]) until
+    add_surface_style runs, so a mid-way failure would persist an entity
+    that crashes ifcopenshell's style loader on the next open. Existing
+    styles with NULL/empty Styles are ignored on reuse for the same
+    reason."""
     color = material_entry.get("color")
     if not color:
         return
     try:
-        contexts = file.by_type("IfcRepresentationContext")
-        if not contexts:
-            return
+        context = ifcopenshell.util.representation.get_context(file, "Model", "Body", "MODEL_VIEW")
+        if context is None:
+            context = ifcopenshell.util.representation.get_context(file, "Model")
+        if context is None:
+            contexts = file.by_type("IfcRepresentationContext")
+            if not contexts:
+                return
+            context = contexts[0]
         color = int(color)
         name = f"color {color}"
-        styles = {style.Name: style for style in file.by_type("IfcSurfaceStyle")}
+        styles = {}
+        for style in file.by_type("IfcSurfaceStyle"):
+            if style.Styles:  # never reuse a malformed (NULL/empty Styles) style
+                styles.setdefault(style.Name, style)
         style = styles.get(name)
         if style is None:
-            style = ifcopenshell.api.run("style.add_style", file, name=name)
-            ifcopenshell.api.run(
-                "style.add_surface_style",
-                file,
-                style=style,
-                ifc_class="IfcSurfaceStyleShading",
-                attributes={
-                    "SurfaceColour": file.create_entity(
-                        "IfcColourRgb",
-                        Name=None,
-                        Red=(color >> 16) / 255,
-                        Green=((color >> 8) & 255) / 255,
-                        Blue=(color & 255) / 255,
-                    )
-                },
+            shading = file.create_entity(
+                "IfcSurfaceStyleShading",
+                SurfaceColour=file.create_entity(
+                    "IfcColourRgb",
+                    Name=None,
+                    Red=(color >> 16) / 255,
+                    Green=((color >> 8) & 255) / 255,
+                    Blue=(color & 255) / 255,
+                ),
             )
-        ifcopenshell.api.run("style.assign_material_style", file, material=material, style=style, context=contexts[0])
+            style = file.create_entity("IfcSurfaceStyle", Name=name, Side="BOTH", Styles=[shading])
+        ifcopenshell.api.run("style.assign_material_style", file, material=material, style=style, context=context)
     except Exception:  # noqa: BLE001, S110 - cosmetic; never fail the insert
         pass
 
