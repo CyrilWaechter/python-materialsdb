@@ -6,6 +6,7 @@ target the 0.9 api (add_layer takes no thickness — edit_layer sets it;
 root.create_entity takes ifc_class=)."""
 
 import math
+import re
 
 import ifcopenshell.api
 import ifcopenshell.util.element
@@ -51,14 +52,14 @@ def existing_materials_by_id(file):
 
 
 def _existing_keys(file):
-    """(material_id, layer_id | None) pairs already present, from the
+    """(material_id, layer_id | None) -> IfcMaterial already present, from the
     materialsdb identity + org_layer psets."""
-    keys = set()
+    found = {}
     for material in file.by_type("IfcMaterial"):
         material_id = _material_id_of(material)
         if material_id is not None:
-            keys.add((material_id, _org_layer_id_of(material)))
-    return keys
+            found.setdefault((material_id, _org_layer_id_of(material)), material)
+    return found
 
 
 def _add_identity_pset(file, material, identity):
@@ -81,6 +82,55 @@ def _add_property_psets(file, material, psets):
         ifcopenshell.api.run("pset.edit_pset", file, pset=pset, properties=props)
 
 
+_OUR_STYLE_NAME = re.compile(r"^(?:color \d+|category .+)$")
+
+
+def _resolved_style(material_entry):
+    """(name, (r, g, b) in 0..1) for a material entry.
+
+    Prefers the server-resolved `style_name`/`style_color` (producer colour or
+    the active scheme's category colour); falls back to the legacy producer
+    `color` for payloads produced by an older server."""
+    name = material_entry.get("style_name")
+    rgb = material_entry.get("style_color")
+    if name and rgb:
+        return name, tuple(float(component) for component in rgb)
+    color = material_entry.get("color")
+    if not color:
+        return None
+    color = int(color)
+    return f"color {color}", (((color >> 16) & 255) / 255, ((color >> 8) & 255) / 255, (color & 255) / 255)
+
+
+def _valid_style_names(material):
+    """Names of the valid (non-empty) surface styles assigned to a material."""
+    names = []
+    for representation in material.HasRepresentation or ():
+        for styled in representation.Representations or ():
+            for item in styled.Items or ():
+                if not item.is_a("IfcStyledItem"):
+                    continue
+                for style in item.Styles or ():
+                    if style.is_a("IfcSurfaceStyle") and style.Styles:
+                        names.append(style.Name)
+                    elif style.is_a("IfcPresentationStyleAssignment"):
+                        names.extend(
+                            nested.Name
+                            for nested in style.Styles or ()
+                            if nested.is_a("IfcSurfaceStyle") and nested.Styles
+                        )
+    return names
+
+
+def _should_style(material):
+    """True when a material has no valid style, or only styles we created (so
+    the materialsdb colour may be refreshed); a third-party style is kept."""
+    names = _valid_style_names(material)
+    if not names:
+        return True
+    return all(name and _OUR_STYLE_NAME.match(name) for name in names)
+
+
 def _apply_style(file, material_entry, material):
     """Best-effort schema-valid material styling; needs a representation
     context (bonsai files have one, scratch CI files do not).
@@ -91,9 +141,10 @@ def _apply_style(file, material_entry, material):
     that crashes ifcopenshell's style loader on the next open. Existing
     styles with NULL/empty Styles are ignored on reuse for the same
     reason."""
-    color = material_entry.get("color")
-    if not color:
+    resolved = _resolved_style(material_entry)
+    if resolved is None:
         return
+    name, rgb = resolved
     try:
         context = ifcopenshell.util.representation.get_context(file, "Model", "Body", "MODEL_VIEW")
         if context is None:
@@ -103,8 +154,6 @@ def _apply_style(file, material_entry, material):
             if not contexts:
                 return
             context = contexts[0]
-        color = int(color)
-        name = f"color {color}"
         styles = {}
         for style in file.by_type("IfcSurfaceStyle"):
             if style.Styles:  # never reuse a malformed (NULL/empty Styles) style
@@ -113,13 +162,7 @@ def _apply_style(file, material_entry, material):
         if style is None:
             shading = file.create_entity(
                 "IfcSurfaceStyleShading",
-                SurfaceColour=file.create_entity(
-                    "IfcColourRgb",
-                    Name=None,
-                    Red=(color >> 16) / 255,
-                    Green=((color >> 8) & 255) / 255,
-                    Blue=(color & 255) / 255,
-                ),
+                SurfaceColour=file.create_entity("IfcColourRgb", Name=None, Red=rgb[0], Green=rgb[1], Blue=rgb[2]),
             )
             style = file.create_entity("IfcSurfaceStyle", Name=name, Side="BOTH", Styles=[shading])
         ifcopenshell.api.run("style.assign_material_style", file, material=material, style=style, context=context)
@@ -146,8 +189,8 @@ def _create_placeholder_material(file, placeholder):
 
 def apply_add_materials(file, payload) -> int:
     """Create IfcMaterial (+ identity/property psets, layer + set, style) per
-    payload entry. Entries whose (material_id, layer_id) key already exists
-    are skipped. Returns the number created."""
+    payload entry. Entries whose (material_id, layer_id) key already exists are
+    re-styled when their colour is ours or missing. Returns the number created."""
     existing = _existing_keys(file)
     created = 0
     for entry in payload.get("materials") or []:
@@ -156,6 +199,8 @@ def apply_add_materials(file, payload) -> int:
         org_layer_id = (entry.get("psets") or {}).get("materialsdb.org_layer", {}).get("layer_id")
         key = (identity["material_id"], layer.get("layer_id") or org_layer_id)
         if key in existing:
+            if _should_style(existing[key]):
+                _apply_style(file, entry, existing[key])
             continue
         material = ifcopenshell.api.run(
             "material.add_material",
@@ -180,7 +225,7 @@ def apply_add_materials(file, payload) -> int:
                 attributes={"LayerThickness": thickness, "Name": label, "Description": str(layer["layer_id"])},
             )
         _apply_style(file, entry, material)
-        existing.add(key)
+        existing[key] = material
         created += 1
     return created
 
@@ -213,9 +258,9 @@ def apply_add_construction(file, payload) -> dict:
                 summary["placeholders_matched"] += 1
             layers.append((layer, material))
             continue
+        entry = layer["material"]
         material = known.get(layer["material_id"])
         if material is None:
-            entry = layer["material"]
             material = ifcopenshell.api.run(
                 "material.add_material",
                 file,
@@ -224,9 +269,12 @@ def apply_add_construction(file, payload) -> dict:
                 description=str(entry.get("description") or ""),
             )
             _add_identity_pset(file, material, entry["identity"])
-            _apply_style(file, entry, material)
             known[layer["material_id"]] = material
             summary["materials_created"] += 1
+        # style reused materials too: an earlier push (or a pre-fix session)
+        # may have left them colourless, and users expect the colour to show
+        if _should_style(material):
+            _apply_style(file, entry, material)
         layers.append((layer, material))
 
     name = str(construction["name"])

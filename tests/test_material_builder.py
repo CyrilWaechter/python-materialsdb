@@ -303,3 +303,49 @@ def test_org_layer_pset_exposes_layer_id_and_thickness(mini_source):
         "00000000-0000-0000-0000-0000000000a1": 0.2,  # 200 mm -> meters
         "00000000-0000-0000-0000-0000000000a2": 0.1,
     }
+
+
+def test_style_for_prefers_producer_colour_and_normalises():
+    from materialsdb.ifc.material_builder import style_for
+
+    name, rgb = style_for(16711680, "Insulation")  # 0xFF0000
+
+    assert name == "color 16711680"
+    assert rgb == (1.0, 0.0, 0.0)  # IfcColourRgb components are normalised 0..1
+
+
+def test_style_for_falls_back_to_scheme_category_colour():
+    from materialsdb.ifc.material_builder import CATEGORIES, style_for
+
+    name, rgb = style_for(None, "Concrete")
+
+    assert name == "category Concrete"
+    assert rgb == tuple(component / 255 for component in CATEGORIES["Concrete"]["color"])
+
+
+def test_style_for_unknown_category_falls_back_to_others():
+    from materialsdb.ifc.material_builder import CATEGORIES, style_for
+
+    name, rgb = style_for(None, "Air")  # not a scheme category
+
+    assert name == "category Others"
+    assert rgb == tuple(component / 255 for component in CATEGORIES["Others"]["color"])
+
+
+def test_build_without_layers_styles_the_material(mini_source):
+    """The to_ifc_layer_set path builds materials with with_layers=False; they
+    must carry a colour too, or exported constructions show no style."""
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+
+    created = builder.build(mini_source.material[0], company="Mini SA", with_layers=False)
+
+    assert len(created) == 1
+    assert not file.by_type("IfcMaterialLayer")  # still material-only
+    styles = file.by_type("IfcSurfaceStyle")
+    assert [style.Name for style in styles] == ["color 16711680"]  # producer colour wins
+    assert all(style.Styles for style in styles)
+    colour = styles[0].Styles[0].SurfaceColour
+    assert (colour.Red, colour.Green, colour.Blue) == (1.0, 0.0, 0.0)
+    assert len(file.by_type("IfcStyledItem")) == 1
+    assert len(file.by_type("IfcStyledRepresentation")) == 1

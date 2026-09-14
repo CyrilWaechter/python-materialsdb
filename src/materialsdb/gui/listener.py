@@ -5,7 +5,7 @@ MaterialBuilder would create (one entry per IfcMaterial); the Bonsai add-on
 maps the payload onto its open file without importing this library."""
 
 from materialsdb import config, utils
-from materialsdb.ifc.material_builder import PSETS, get_value
+from materialsdb.ifc.material_builder import PSETS, get_value, style_for
 
 
 def _resolved_psets(layer, country) -> dict:
@@ -50,6 +50,10 @@ def build_add_materials_payload(store_, items, country=None, lang=None):
         description = str(utils.get_material_description(material, lang))
         category = str(getattr(material.information, "group", "") or "")
         color = getattr(material.information, "color", None)
+        color = int(color) if color else None
+        # Resolve the surface style server-side: the add-on runs in Blender's
+        # interpreter without access to the materialsdb colour scheme.
+        style_name, style_rgb = style_for(color, category)
         entries = []
         for layer in utils.get_material_layers(material):
             if wanted is not None and str(layer.id) not in wanted:
@@ -63,7 +67,9 @@ def build_add_materials_payload(store_, items, country=None, lang=None):
                     "name": name,
                     "description": description,
                     "category": category,
-                    "color": int(color) if color else None,
+                    "color": color,
+                    "style_name": style_name,
+                    "style_color": [round(component, 6) for component in style_rgb],
                     "identity": {
                         "material_id": material_id,
                         "company_id": str(summary.company_id or ""),
@@ -120,6 +126,9 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
             problems.append(f"unknown material id: {layer.material_id}")
             continue
         color = getattr(material.information, "color", None)
+        color = int(color) if color else None
+        category = str(getattr(material.information, "group", "") or "")
+        style_name, style_rgb = style_for(color, category)
         layers.append(
             {
                 "material_id": layer.material_id,
@@ -128,8 +137,10 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
                     "source_id": layer.material_id,
                     "name": str(utils.get_material_name(material, lang)),
                     "description": str(utils.get_material_description(material, lang)),
-                    "category": str(getattr(material.information, "group", "") or ""),
-                    "color": int(color) if color else None,
+                    "category": category,
+                    "color": color,
+                    "style_name": style_name,
+                    "style_color": [round(component, 6) for component in style_rgb],
                     "identity": {
                         "material_id": layer.material_id,
                         "company_id": str(summary.company_id or ""),

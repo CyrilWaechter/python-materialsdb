@@ -260,3 +260,29 @@ def test_construction_payload_no_u_values_when_lambda_unresolvable(store):
 
     assert payload is None
     assert problems == ["unknown material id: 00000000-0000-0000-0000-000000000004"]
+
+
+def test_payload_carries_resolved_producer_style(store):
+    payload, missing = build_add_materials_payload(store, [{"id": "00000000-0000-0000-0000-000000000001"}])
+
+    assert missing == []
+    first = payload["materials"][0]
+    assert first["style_name"] == "color 16711680"  # producer colour wins
+    assert first["style_color"] == [1.0, 0.0, 0.0]  # normalised 0xFF0000
+
+
+def test_construction_payload_carries_category_scheme_style(store):
+    from materialsdb.ifc.material_builder import CATEGORIES
+
+    payload, problems = build_add_construction_payload(
+        store,
+        body={
+            "name": "wall",
+            "layers": [{"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15}],
+        },
+    )
+
+    assert problems == []
+    material = payload["construction"]["layers"][0]["material"]
+    assert material["style_name"] == "category Concrete"  # no producer colour -> scheme
+    assert material["style_color"] == [round(component / 255, 6) for component in CATEGORIES["Concrete"]["color"]]

@@ -1,3 +1,4 @@
+import copy
 import sys
 from pathlib import Path
 
@@ -166,6 +167,127 @@ def test_apply_never_reuses_malformed_surface_style(store):
     assert assigned, "a styled item must be created"
     assert all(malformed not in item.Styles for item in assigned)
     assert any(style.Styles and style.Name == "color 16711680" for style in file.by_type("IfcSurfaceStyle"))
+
+
+def _strip_representations(file):
+    for material in file.by_type("IfcMaterial"):
+        for representation in list(material.HasRepresentation or ()):
+            file.remove(representation)
+
+
+def test_apply_add_materials_styles_reused_material(store):
+    """A material already present (identity pset) but colourless -- e.g. pushed
+    by the pre-fix add-on -- must get its style on a later push."""
+    file = _file_with_body_context()
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+    _strip_representations(file)
+    assert not file.by_type("IfcMaterialDefinitionRepresentation")
+
+    assert apply_add_materials(file, payload) == 0  # nothing re-created
+
+    for material in file.by_type("IfcMaterial"):
+        assert material.HasRepresentation
+    assert [style.Name for style in file.by_type("IfcSurfaceStyle")] == ["color 16711680"]
+    assert all(style.Styles for style in file.by_type("IfcSurfaceStyle"))
+
+
+def test_apply_add_construction_styles_reused_material(store):
+    file = _file_with_body_context()
+    apply_add_materials(file, _payload(store))  # Isolant A already in the model
+    _strip_representations(file)
+
+    summary = apply_add_construction(file, CONSTRUCTION_PAYLOAD)
+
+    assert summary["materials_created"] == 1  # Beton B only; Isolant A reused
+    isolant = next(material for material in file.by_type("IfcMaterial") if material.Name == "Isolant A")
+    assert isolant.HasRepresentation
+
+
+def test_apply_add_material_uses_category_scheme_colour(store):
+    from materialsdb.ifc.material_builder import CATEGORIES
+
+    file = _file_with_body_context()
+    payload, missing = build_add_materials_payload(store, [{"id": "00000000-0000-0000-0000-000000000002"}])
+    assert missing == []  # Beton B carries no producer colour
+
+    apply_add_materials(file, payload)
+
+    styles = file.by_type("IfcSurfaceStyle")
+    assert [style.Name for style in styles] == ["category Concrete"]
+    colour = _shading_of(styles[0]).SurfaceColour
+    expected = CATEGORIES["Concrete"]["color"]
+    assert (round(colour.Red * 255), round(colour.Green * 255), round(colour.Blue * 255)) == expected
+
+
+def test_apply_preserves_third_party_style_on_reused_material(store):
+    file = _file_with_body_context()
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+    material = file.by_type("IfcMaterial")[0]
+    styled_item = next(
+        item
+        for representation in material.HasRepresentation
+        for styled in representation.Representations
+        for item in styled.Items
+        if item.is_a("IfcStyledItem")
+    )
+    custom = ifcopenshell.api.run("style.add_style", file, name="MyCustom")
+    ifcopenshell.api.run(
+        "style.add_surface_style",
+        file,
+        style=custom,
+        ifc_class="IfcSurfaceStyleShading",
+        attributes={"SurfaceColour": {"Name": None, "Red": 0.1, "Green": 0.2, "Blue": 0.3}},
+    )
+    styled_item.Styles = (custom,)
+
+    apply_add_materials(file, payload)  # existing key -> would re-style
+
+    assert styled_item.Styles[0].Name == "MyCustom"  # third-party style kept
+
+
+def test_apply_updates_our_style_on_colour_change(store):
+    file = _file_with_body_context()
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+    material = file.by_type("IfcMaterial")[0]
+
+    changed = copy.deepcopy(payload)
+    for entry in changed["materials"]:
+        entry["color"] = 255
+        entry["style_name"] = "color 255"
+        entry["style_color"] = [0.0, 0.0, 1.0]
+    apply_add_materials(file, changed)
+
+    styled_item = next(
+        item
+        for representation in material.HasRepresentation
+        for styled in representation.Representations
+        for item in styled.Items
+        if item.is_a("IfcStyledItem")
+    )
+    assert styled_item.Styles[0].Name == "color 255"  # our style refreshed
+
+
+def test_apply_styling_idempotent(store):
+    file = _file_with_body_context()
+    payload = _payload(store)
+
+    apply_add_materials(file, payload)
+    counts = (
+        len(file.by_type("IfcSurfaceStyle")),
+        len(file.by_type("IfcStyledItem")),
+        len(file.by_type("IfcMaterialDefinitionRepresentation")),
+    )
+
+    apply_add_materials(file, payload)
+
+    assert (
+        len(file.by_type("IfcSurfaceStyle")),
+        len(file.by_type("IfcStyledItem")),
+        len(file.by_type("IfcMaterialDefinitionRepresentation")),
+    ) == counts
 
 
 def test_apply_is_idempotent(store):

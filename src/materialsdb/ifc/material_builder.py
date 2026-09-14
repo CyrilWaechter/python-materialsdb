@@ -2,12 +2,21 @@
 
 import json
 from pathlib import Path
+from typing import TypedDict
 
 from materialsdb import config, utils
 
 MATERIALSDB_PSET = "materialsdb"
 
-CATEGORIES = {
+
+class CategoryStyle(TypedDict):
+    """One palette entry. `hatch` is reserved for future pattern support."""
+
+    hatch: str
+    color: tuple[int, int, int]
+
+
+CATEGORIES: dict[str, CategoryStyle] = {
     "Others": {"hatch": "", "color": (255, 255, 255)},
     "Water_Proof": {"hatch": "", "color": (255, 255, 255)},
     "Vapour_Proof": {"hatch": "", "color": (0, 0, 0)},
@@ -26,6 +35,29 @@ CATEGORIES = {
     "Glas": {"hatch": "", "color": (27, 79, 8)},
     "Soil": {"hatch": "", "color": (142, 84, 52)},
 }
+
+# Named colour schemes: a category -> palette. Only the default ships today;
+# more schemes (and a GUI selector) are planned.
+SCHEMES: dict[str, dict[str, CategoryStyle]] = {"Lesosai": CATEGORIES}
+DEFAULT_SCHEME = "Lesosai"
+
+
+def _rgb_int_components(color: int) -> tuple[float, float, float]:
+    """Decimal 0xRRGGBB -> normalised (r, g, b) in 0..1 (IfcColourRgb units)."""
+    return (((color >> 16) & 255) / 255, ((color >> 8) & 255) / 255, (color & 255) / 255)
+
+
+def style_for(color, category, scheme=None):
+    """Resolve a material's (IfcSurfaceStyle.Name, (r, g, b) in 0..1).
+
+    The producer colour wins when present; otherwise the category colour from
+    the scheme (default 'Lesosai' = CATEGORIES). Unknown categories fall back
+    to 'Others'."""
+    if color:
+        return f"color {int(color)}", _rgb_int_components(int(color))
+    palette = SCHEMES.get(scheme or DEFAULT_SCHEME, CATEGORIES)
+    category = category if category in palette else "Others"
+    return f"category {category}", tuple(component / 255 for component in palette[category]["color"])
 
 
 def clean_psets(psets):
@@ -71,6 +103,7 @@ class MaterialBuilder:
         name = utils.get_material_name(material, self.lang)
         description = utils.get_material_description(material, self.lang)
         category = str(material.information.group or "")
+        color = material.information.color
         if not with_layers:
             # reuse an already-present material instead of duplicating it;
             # its identity pset is already in place
@@ -79,15 +112,9 @@ class MaterialBuilder:
                 return [existing]
             ifc_material = self.file.createIfcMaterial(name, str(description), str(category))
             self._create_identity_pset(ifc_material, material, company_id, company, verxml)
+            self._add_style_chain(color, category)
             return [ifc_material]
-        color = material.information.color
-        surface_style = self.get_surface_style(color, category)
-        styled_item = self.file.createIfcStyledItem(Styles=[surface_style])
-        self.file.createIfcStyledRepresentation(
-            ContextOfItems=self._get_context(),
-            RepresentationIdentifier="Body",
-            Items=[styled_item],
-        )
+        self._add_style_chain(color, category)
         created = []
         wanted = {str(g) for g in layer_ids} if layer_ids is not None else None
         for layer in utils.get_material_layers(material):
@@ -191,29 +218,32 @@ class MaterialBuilder:
                 Material=ifc_material,
             )
 
-    def get_surface_style(self, color, category):
-        if color:
-            name = f"color {color}"
-        else:
-            if not category or category not in CATEGORIES:
-                category = "Others"
-            name = f"category {category}"
+    def _add_style_chain(self, color, category, scheme=None):
+        """Create the floating styled chain MaterialBuilder uses for a
+        material's colour (shared style + one styled item per build)."""
+        surface_style = self.get_surface_style(color, category, scheme=scheme)
+        styled_item = self.file.createIfcStyledItem(Styles=[surface_style])
+        self.file.createIfcStyledRepresentation(
+            ContextOfItems=self._get_context(),
+            RepresentationIdentifier="Body",
+            Items=[styled_item],
+        )
+
+    def get_surface_style(self, color, category, scheme=None):
+        name, rgb = style_for(color, category, scheme=scheme)
         if name in self._styles and self._styles[name] in self.file:
             return self._styles[name]
-        if color:
-            style = self.file.createIfcSurfaceStyleShading(SurfaceColour=self.color_xml_to_ifc(color))
-        else:
-            style = self.file.createIfcSurfaceStyleShading(
-                SurfaceColour=self.file.createIfcColourRgb(None, *CATEGORIES[category]["color"]),
-            )
-        surface_style = self.file.createIfcSurfaceStyle(Name=name, Side="BOTH", Styles=[style])
+        shading = self.file.createIfcSurfaceStyleShading(
+            SurfaceColour=self.file.createIfcColourRgb(None, *rgb),
+        )
+        surface_style = self.file.createIfcSurfaceStyle(Name=name, Side="BOTH", Styles=[shading])
         self._styles[name] = surface_style
         return surface_style
 
     def color_xml_to_ifc(self, color: int):
         """Color definition in xml is obscur. We assume that it is a decimal color.
         See: https://stackoverflow.com/a/2262152/4098083"""
-        return self.file.createIfcColourRgb(Blue=color & 255, Green=(color >> 8) & 255, Red=(color >> 16) & 255)
+        return self.file.createIfcColourRgb(None, *_rgb_int_components(int(color)))
 
 
 def _materials_of(pset):
