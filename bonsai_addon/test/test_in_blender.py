@@ -178,6 +178,13 @@ def test_full_listener_roundtrip(tmp_path):
         identity = [p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb"]
         assert len(identity) == 2
 
+        # the pushed style must be registered with Bonsai (linked Blender
+        # material), or the viewport shows no colour and editing it crashes
+        import bpy
+
+        style = next(s for s in file.by_type("IfcSurfaceStyle") if s.Name == "color 16711680")
+        assert isinstance(tool.Ifc.get_object(style), bpy.types.Material)
+
         status, body = _request(port, token, "GET", "/api/listener/clients")
         assert status == 200
         assert body["clients"][0]["last_status"] == {"status": "applied", "detail": "2 material(s) added"}

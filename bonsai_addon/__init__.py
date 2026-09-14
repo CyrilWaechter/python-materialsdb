@@ -43,10 +43,12 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
         action = payload.get("action")
         if action == "add_materials":
             count = insert.apply_add_materials(tool.Ifc.get(), payload)
+            _sync_style_materials(tool.Ifc.get())
             _CLIENT.report("applied", f"{count} material(s) added")
         elif action == "add_construction":
             result = insert.apply_add_construction(tool.Ifc.get(), payload)
             _link_pushed_types(tool.Ifc.get(), payload["construction"])
+            _sync_style_materials(tool.Ifc.get())
             _CLIENT.report(
                 "applied",
                 f"{result['types_created']} type(s) created, {result['sets_updated']} set(s) updated, "
@@ -87,6 +89,27 @@ def _link_pushed_types(file, construction):
             tool.Root.set_object_name(obj, element)
             tool.Collector.assign(obj)
             bpy.context.view_layer.update()
+
+
+def _sync_style_materials(file):
+    """Give live-pushed IfcSurfaceStyle entities a Bonsai Blender material.
+
+    Bonsai builds its Blender material and the IfcStore link only while
+    importing (import_ifc.create_style); a style added to an already-open model
+    has none, so the viewport layer slicing gets no material (no colour) and
+    the style editor fails on the missing material. Mirror that import step
+    here: create + link + colour, best-effort per style."""
+    for style in file.by_type("IfcSurfaceStyle"):
+        try:
+            blender_material = tool.Ifc.get_object(style)
+            if blender_material is None:
+                blender_material = bpy.data.materials.new(style.Name or str(style.id()))
+                blender_material.use_fake_user = True
+                tool.Ifc.link(style, blender_material)
+            tool.Style.get_material_style_props(blender_material).active_style_type = "Shading"
+            tool.Style.switch_shading(blender_material, "Shading")
+        except Exception:  # noqa: BLE001, S110 - cosmetic; never fail the push
+            pass
 
 
 def _poll_timer():
