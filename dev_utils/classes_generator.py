@@ -9,6 +9,7 @@ See the LICENSE.md file for more details.
 Author : Cyril Waechter
 """
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -114,7 +115,7 @@ class {class_name}({parent_class_name}):
         """xs:pattern"""
         if hasattr(element, "pattern"):
             value = element.pattern.get("value")
-            pyattr.with_default.append(f'xml_pattern:str = "{value}"')
+            pyattr.with_default.append(f"xml_pattern:str = {json.dumps(value)}")
 
     def parse_complex_by_name(self, lookup_name, pyattr):
         for complex_type in self.root.complexType:

@@ -93,7 +93,7 @@ class Guid(str):
 
 class Brackguid(str):
     xs_type: str = "simpleType"
-    xml_pattern:str = "\{[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\}"
+    xml_pattern:str = "\\{[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\\}"
     xml_name: str = "Brackguid"
 
 
