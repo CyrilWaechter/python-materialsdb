@@ -51,21 +51,22 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
             return
         action = payload.get("action")
         if action == "add_materials":
-            count = insert.apply_add_materials(tool.Ifc.get(), payload)
+            summary = {}
+            count = insert.apply_add_materials(tool.Ifc.get(), payload, summary=summary)
             _sync_style_materials(tool.Ifc.get())
-            _CLIENT.report("applied", f"{count} material(s) added")
+            _CLIENT.report("applied", _safety_net(f"{count} material(s) added", summary))
             _send_model_map()
         elif action == "add_construction":
             result = insert.apply_add_construction(tool.Ifc.get(), payload)
             _link_pushed_types(tool.Ifc.get(), payload["construction"])
             _sync_style_materials(tool.Ifc.get())
-            _CLIENT.report(
-                "applied",
+            report = (
                 f"{result['types_created']} type(s) created, {result['sets_updated']} set(s) updated, "
                 f"{result['materials_created']} material(s) created, "
                 f"{result['placeholders_matched']} placeholder(s) matched, "
-                f"{result['psets_written']} thermal pset(s) written",
+                f"{result['psets_written']} thermal pset(s) written"
             )
+            _CLIENT.report("applied", _safety_net(report, result))
             _send_model_map()
         else:
             _CLIENT.report("error", f"unknown action: {action}")
@@ -73,6 +74,15 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
 
 def _model_path():
     return str(tool.Ifc.get_path() or "")
+
+
+def _safety_net(report, summary):
+    """Append the not-opted-in safety net: a push never silently drops a changed
+    material, so tell the user how many were left untouched."""
+    skipped = (summary or {}).get("changed_skipped") or []
+    if skipped:
+        report += f"; {len(skipped)} changed material(s) left unchanged"
+    return report
 
 
 def _send_model_map():

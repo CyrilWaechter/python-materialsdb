@@ -535,6 +535,131 @@ def test_apply_backfills_legacy_fingerprint(store):
     assert _fingerprint_of(_material_at(file, A2)) == "baseline"
 
 
+NEW_MID = "00000000-0000-0000-0000-0000000000c9"
+NEW_LID = "00000000-0000-0000-0000-0000000000c2"
+
+
+def _materials_at(file, layer_id):
+    return [m for m in file.by_type("IfcMaterial") if insert._org_layer_id_of(m) == layer_id]
+
+
+def _replace_entry(thick=0.2, lid=NEW_LID, with_layer=True, replaces_layer=A1):
+    """A payload entry asking to replace the superseded model material/layer
+    with NEW_MID's data."""
+    return {
+        "source_id": NEW_MID,
+        "name": "Replacement C",
+        "description": "repl desc",
+        "category": "Concrete",
+        "style_name": "color 255",
+        "style_color": [0.0, 0.0, 1.0],
+        "identity": {
+            "material_id": NEW_MID,
+            "company_id": "C",
+            "company": "Co",
+            "fingerprint": "fp-new",
+            "fingerprint_scheme": "materialsdb-fp/1",
+        },
+        "mode": "replace",
+        "replaces": {"material_id": MATERIAL_ID, "layer_id": replaces_layer},
+        "psets": {"materialsdb.org_layer": {"layer_id": lid, "thick": thick}},
+        "layer": {"layer_id": lid, "thick_m": thick} if with_layer else None,
+    }
+
+
+def test_apply_replace_layer_swaps_material_in_place(store):
+    """Layer-level replace of one layer of a 2-layer material: the superseded
+    IfcMaterial is removed and the replacement takes its layer's exact position
+    and design thickness (the replacement's own thickness must not move it);
+    the sibling layer is kept."""
+    file = _file_with_body_context()
+    apply_add_materials(file, _payload(store))
+    old_material = _material_at(file, A1)
+    old_id = old_material.id()
+    old_layer = insert._layer_of(file, old_material)
+    reused_layer_id = old_layer.id()
+    foreign = ifcopenshell.api.run("pset.add_pset", file, product=old_material, name="Pset_MaterialCommon")
+
+    summary = {}
+    assert apply_add_materials(file, {"materials": [_replace_entry(thick=0.3)]}, summary) == 0
+
+    assert summary["replace_failed"] == []
+    assert all(m.id() != old_id for m in file.by_type("IfcMaterial"))  # superseded gone
+    assert _materials_at(file, A1) == []  # its org_layer identity is gone too
+    assert foreign.id() not in {e.id() for e in file}  # its psets went with it
+
+    replacement = _material_at(file, NEW_LID)
+    assert replacement.Name == "Replacement C"
+    assert replacement.Description == "repl desc"
+    assert replacement.Category == "Concrete"
+    assert ifcopenshell.util.element.get_psets(replacement)["materialsdb"]["fingerprint"] == "fp-new"
+
+    layer = file.by_id(reused_layer_id)  # same entity, same position
+    assert layer.Material == replacement
+    assert layer.LayerThickness == pytest.approx(0.2)  # model design thickness preserved, not 0.3
+    assert layer.Name == "Replacement C | 200mm"
+    assert ifcopenshell.util.element.get_psets(replacement)["materialsdb.org_layer"]["thick"] == pytest.approx(0.3)
+
+    assert _material_at(file, A2) is not None  # sibling untouched
+    assert len(file.by_type("IfcMaterial")) == 2
+    assert len(file.by_type("IfcMaterialLayer")) == 2
+    # no floating style chain left behind by the removed material
+    assert [item for item in file.by_type("IfcStyledItem") if item.Item is None and not item.StyledByItem] == []
+
+
+def test_apply_replace_whole_material_removes_all_old_layers(store):
+    """Whole-material replace with a layer-less replacement: every model layer
+    of the superseded material is removed, leaving only the replacement."""
+    file = _file_with_body_context()
+    apply_add_materials(file, _payload(store))
+    old_material_ids = {m.id() for m in file.by_type("IfcMaterial")}
+    old_layer_ids = {layer.id() for layer in file.by_type("IfcMaterialLayer")}
+    assert len(old_layer_ids) == 2
+
+    summary = {}
+    apply_add_materials(file, {"materials": [_replace_entry(with_layer=False, replaces_layer=None)]}, summary)
+
+    assert summary["replace_failed"] == []
+    assert {m.id() for m in file.by_type("IfcMaterial")} & old_material_ids == set()
+    assert {layer.id() for layer in file.by_type("IfcMaterialLayer")} & old_layer_ids == set()
+    assert len(file.by_type("IfcMaterialLayer")) == 0
+    assert len(file.by_type("IfcMaterialLayerSet")) == 0  # emptied sets swept
+    assert len(file.by_type("IfcMaterial")) == 1
+    assert file.by_type("IfcMaterial")[0].Name == "Replacement C"
+
+
+def test_apply_replace_whole_material_collapses_to_single_layer(store):
+    """Whole-material replace with a single-layer replacement: one old layer is
+    reused (same entity) and the extras are removed."""
+    file = _file_with_body_context()
+    apply_add_materials(file, _payload(store))
+    old_material_ids = {m.id() for m in file.by_type("IfcMaterial")}
+    old_layer_ids = {layer.id() for layer in file.by_type("IfcMaterialLayer")}
+
+    summary = {}
+    apply_add_materials(file, {"materials": [_replace_entry(replaces_layer=None)]}, summary)
+
+    assert summary["replace_failed"] == []
+    assert {m.id() for m in file.by_type("IfcMaterial")} & old_material_ids == set()
+    assert len(file.by_type("IfcMaterialLayer")) == 1
+    remaining = file.by_type("IfcMaterialLayer")[0]
+    assert remaining.id() in old_layer_ids  # one old layer reused
+    assert remaining.Material == _material_at(file, NEW_LID)
+
+
+def test_apply_replace_records_missing_target():
+    """A replace whose superseded material/layer is not in the model must be
+    recorded and must not create a stray replacement."""
+    file = ifcopenshell.file(schema="IFC4")
+    entry = _replace_entry(with_layer=False, replaces_layer=None)
+
+    summary = {}
+    assert apply_add_materials(file, {"materials": [entry]}, summary) == 0
+
+    assert summary["replace_failed"] == [MATERIAL_ID]
+    assert len(file.by_type("IfcMaterial")) == 0
+
+
 CONSTRUCTION_PAYLOAD = {
     "action": "add_construction",
     "construction": {
@@ -605,6 +730,7 @@ def test_construction_creates_type_and_layers():
         "placeholders_matched": 0,
         "update_missing": [],
         "changed_skipped": [],
+        "replace_failed": [],
         "psets_written": 0,
     }
     types = file.by_type("IfcWallType")
@@ -804,6 +930,7 @@ def test_construction_resend_updates_same_set():
         "placeholders_matched": 0,
         "update_missing": [],
         "changed_skipped": [],
+        "replace_failed": [],
         "psets_written": 0,
     }
     assert len(file.by_type("IfcWallType")) == 1  # no duplicate type
@@ -907,6 +1034,31 @@ def test_construction_update_refreshes_material_in_place():
     assert material.Name == "Isolant A v2"
     assert _fingerprint_of(material) == "new"
     assert ifcopenshell.util.element.get_psets(material)["Pset_MaterialCommon"]["Reference"] == "keep"
+
+
+def test_construction_replace_removes_superseded_material():
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_construction(file, _one_layer_construction("old"))
+    old_id = _material_at(file, A1).id()
+
+    payload = _one_layer_construction(name="Replacement C", mode="replace")
+    entry = payload["construction"]["layers"][0]["material"]
+    entry["identity"]["material_id"] = NEW_MID
+    entry["identity"]["fingerprint"] = "fp-new"
+    entry["psets"]["materialsdb.org_layer"]["layer_id"] = NEW_LID
+    entry["replaces"] = {"material_id": MATERIAL_ID, "layer_id": A1}
+    entry["source_id"] = NEW_MID
+
+    summary = apply_add_construction(file, payload)
+
+    assert summary["replace_failed"] == []
+    assert all(m.id() != old_id for m in file.by_type("IfcMaterial"))
+    replacement = _material_at(file, NEW_LID)
+    assert replacement is not None
+    assert replacement.Name == "Replacement C"
+    layer_set = file.by_type("IfcWallType")[0].HasAssociations[0].RelatingMaterial
+    assert len(layer_set.MaterialLayers) == 1
+    assert layer_set.MaterialLayers[0].Material == replacement
 
 
 def test_construction_skip_changed_material_reports():

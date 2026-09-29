@@ -199,6 +199,128 @@ def _apply_update(file, entry, material, layers_by_id, summary) -> bool:
     return refreshed
 
 
+def _remove_layer(file, layer) -> None:
+    """Remove an IfcMaterialLayer, dropping its layer set when it becomes empty
+    (an IfcMaterialLayerSet with no members is schema-invalid)."""
+    layer_sets = list(getattr(layer, "ToMaterialLayerSet", None) or ())
+    file.remove(layer)
+    for parent in layer_sets:
+        if not parent.MaterialLayers:
+            file.remove(parent)
+
+
+def _purge_material(file, material, keep_layers=False) -> None:
+    """Remove one superseded IfcMaterial and everything the add-on created for
+    it — a local, pure-ifcopenshell equivalent of
+    material_builder.purge_material (the add-on must not import materialsdb).
+
+    Property psets are removed child-first, the material's own styled
+    representation is detached, and unless `keep_layers` its IfcMaterialLayer is
+    removed (the layer set is dropped when emptied). Shared IfcSurfaceStyle
+    entities are intentionally kept; the floating styled chains are swept so
+    they do not accumulate."""
+    target = material.id()
+    for pset in list(file.get_inverse(material)):
+        if pset.is_a("IfcMaterialProperties"):
+            for prop in list(pset.Properties or ()):
+                file.remove(prop)
+            file.remove(pset)
+    for representation in list(getattr(material, "HasRepresentation", None) or ()):
+        file.remove(representation)
+    if not keep_layers:
+        for layer in list(file.by_type("IfcMaterialLayer")):
+            if layer.Material is not None and layer.Material.id() == target:
+                _remove_layer(file, layer)
+    file.remove(material)
+    orphans = {item.id() for item in file.by_type("IfcStyledItem") if item.Item is None and not item.StyledByItem}
+    for representation in list(file.by_type("IfcStyledRepresentation")):
+        items = representation.Items or ()
+        if items and all(item.id() in orphans for item in items):
+            file.remove(representation)
+    for item in list(file.by_type("IfcStyledItem")):
+        if item.id() in orphans:
+            file.remove(item)
+
+
+def _build_replacement_material(file, entry):
+    """Create the replacement IfcMaterial (attributes + identity/property psets +
+    best-effort style) for a `mode == "replace"` entry."""
+    material = ifcopenshell.api.run(
+        "material.add_material",
+        file,
+        name=str(entry["name"]),
+        category=str(entry.get("category") or ""),
+        description=str(entry.get("description") or ""),
+    )
+    _add_identity_pset(file, material, entry["identity"])
+    _add_property_psets(file, material, entry.get("psets"))
+    _apply_style(file, entry, material)
+    return material
+
+
+def _retarget_layer(entry, layer, material) -> None:
+    """Point a reused IfcMaterialLayer at the replacement, keeping the model
+    layer's design thickness/position (the construction geometry is the model's,
+    not the replacement material's) and refreshing its label/description. Only
+    when the model layer has no thickness does the entry's supply one."""
+    layer.Material = material
+    thickness = layer.LayerThickness
+    if not thickness:
+        thickness = _entry_thickness(entry)
+    if thickness is not None:
+        layer.LayerThickness = thickness
+        layer.Name = f"{entry['name']} | {round(thickness * 1000)}mm"
+    else:
+        layer.Name = str(entry["name"])
+    layer.Description = str(_entry_layer_id(entry) or "")
+
+
+def _apply_replace(file, entry, summary) -> None:
+    """Replace the superseded model material/layer named by `entry["replaces"]`.
+
+    Layer-level (a `layer_id` is given) swaps only that model layer's
+    IfcMaterial. Whole-material (no `layer_id`) handles every model layer of the
+    material: one IfcMaterialLayer is reused when the replacement entry carries
+    a layer and the extras are removed. The superseded IfcMaterials and their
+    psets/style/org_layer are removed. A target that is no longer present (or a
+    failure while applying) is recorded in `summary["replace_failed"]` instead
+    of raising."""
+    failed = summary.setdefault("replace_failed", [])
+    replaces = entry.get("replaces") or {}
+    material_id = replaces.get("material_id")
+    layer_id = replaces.get("layer_id")
+    targets = _model_layers(file, material_id)
+    if layer_id is not None:
+        pairs = list(targets.get(layer_id) or [])
+    else:
+        pairs = [pair for group in targets.values() for pair in group]
+    if not pairs:
+        failed.append(material_id)
+        return
+    try:
+        material = _build_replacement_material(file, entry)
+        if layer_id is not None:
+            model_material, model_layer = pairs[0]
+            if model_layer is not None:
+                _retarget_layer(entry, model_layer, material)
+            _purge_material(file, model_material, keep_layers=True)
+            return
+        keep = next((pair for pair in pairs if pair[1] is not None), None) if entry.get("layer") else None
+        keep_ids = (keep[0].id(), keep[1].id()) if keep is not None else None
+        for model_material, model_layer in pairs:
+            if model_layer is None:
+                continue
+            if (model_material.id(), model_layer.id()) == keep_ids:
+                continue
+            _remove_layer(file, model_layer)
+        if keep is not None:
+            _retarget_layer(entry, keep[1], material)
+        for model_material, _model_layer in pairs:
+            _purge_material(file, model_material, keep_layers=True)
+    except Exception:  # noqa: BLE001 - a failed replacement must not abort the push
+        failed.append(material_id)
+
+
 def _add_identity_pset(file, material, identity):
     pset = ifcopenshell.api.run("pset.add_pset", file, product=material, name="materialsdb")
     properties = {
@@ -335,7 +457,11 @@ def apply_add_materials(file, payload, summary=None) -> int:
     legacy material without a fingerprint gets the baseline stamped on it.
     Returns the number created. When a `summary` dict is passed it is populated
     with `changed_skipped`/`update_missing` (the picker's changed material ids
-    and any update mappings that could not be applied)."""
+    and any update mappings that could not be applied) and `replace_failed`
+    (replacements whose target was no longer present). A `mode == "replace"`
+    entry supersedes the material/layer named by its `replaces` mapping: the
+    superseded entities are removed and the entry's material takes their
+    place."""
     existing = _existing_keys(file)
     known_by_id = existing_materials_by_id(file)
     created = 0
@@ -343,10 +469,16 @@ def apply_add_materials(file, payload, summary=None) -> int:
         summary = {}
     summary.setdefault("update_missing", [])
     summary.setdefault("changed_skipped", [])
+    summary.setdefault("replace_failed", [])
     for entry in payload.get("materials") or []:
         identity = entry["identity"]
         material_id = identity["material_id"]
         mode = entry.get("mode", "skip")
+        if mode == "replace":
+            _apply_replace(file, entry, summary)
+            existing = _existing_keys(file)
+            known_by_id = existing_materials_by_id(file)
+            continue
         layer = entry.get("layer") or {}
         org_layer_id = (entry.get("psets") or {}).get("materialsdb.org_layer", {}).get("layer_id")
         key = (material_id, layer.get("layer_id") or org_layer_id)
@@ -418,6 +550,7 @@ def apply_add_construction(file, payload) -> dict:
         "placeholders_matched": 0,
         "update_missing": [],
         "changed_skipped": [],
+        "replace_failed": [],
     }
 
     known = _existing_keys(file)
@@ -444,7 +577,12 @@ def apply_add_construction(file, payload) -> dict:
         current = known_by_id.get(material_id)
         changed = False
         refreshed = False
-        if current is not None:
+        if mode == "replace":
+            _apply_replace(file, entry, summary)
+            known = _existing_keys(file)
+            known_by_id = existing_materials_by_id(file)
+            material = known.get(key)
+        elif current is not None:
             if mode == "update":
                 # _refresh_material already applied the style, so skip the
                 # generic re-style below when it refreshed in place
