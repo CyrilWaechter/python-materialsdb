@@ -357,6 +357,12 @@ CONSTRUCTION_PAYLOAD = {
                         "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
                         "company": "Mini SA",
                     },
+                    "psets": {
+                        "materialsdb.org_layer": {
+                            "layer_id": "00000000-0000-0000-0000-0000000000a1",
+                            "thick": 0.2,
+                        }
+                    },
                 },
             },
             {
@@ -416,6 +422,43 @@ def test_construction_creates_type_and_layers():
     associations = [a for a in wall_type.HasAssociations if a.is_a("IfcRelAssociatesMaterial")]
     assert len(associations) == 1
     assert associations[0].RelatingMaterial == sets[0]
+
+
+def test_construction_writes_material_psets():
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_construction(file, CONSTRUCTION_PAYLOAD)
+    isolant = next(m for m in file.by_type("IfcMaterial") if m.Name == "Isolant A")
+    psets = [p for p in file.get_inverse(isolant) if p.is_a("IfcMaterialProperties")]
+    org = [p for p in psets if p.Name == "materialsdb.org_layer"]
+    assert len(org) == 1
+    props = {prop.Name: prop.NominalValue.wrappedValue for prop in org[0].Properties}
+    assert props["layer_id"] == "00000000-0000-0000-0000-0000000000a1"
+    assert props["thick"] == 0.2
+
+
+def test_construction_backfills_psets_on_reused_material():
+    """A reused material that lacks the org_layer pset (e.g. created by the
+    pre-fix add-on) gets it written once, not duplicated on re-push."""
+    file = ifcopenshell.file(schema="IFC4")
+    reused = ifcopenshell.api.run("material.add_material", file, name="Isolant A")
+    identity = ifcopenshell.api.run("pset.add_pset", file, product=reused, name="materialsdb")
+    ifcopenshell.api.run(
+        "pset.edit_pset",
+        file,
+        pset=identity,
+        properties={"material_id": "00000000-0000-0000-0000-000000000001"},
+    )
+
+    summary = apply_add_construction(file, CONSTRUCTION_PAYLOAD)
+
+    assert summary["materials_created"] == 1  # Beton B only; Isolant A reused
+    psets = ifcopenshell.util.element.get_psets(reused)
+    assert psets["materialsdb.org_layer"]["layer_id"] == "00000000-0000-0000-0000-0000000000a1"
+
+    apply_add_construction(file, CONSTRUCTION_PAYLOAD)
+
+    org = [p for p in file.get_inverse(reused) if p.is_a("IfcMaterialProperties") and p.Name == "materialsdb.org_layer"]
+    assert len(org) == 1  # backfill is idempotent
 
 
 def test_construction_resend_updates_same_set():

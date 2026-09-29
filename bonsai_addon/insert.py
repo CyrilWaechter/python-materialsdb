@@ -237,8 +237,10 @@ def apply_add_construction(file, payload) -> dict:
     existing set IN PLACE (same entity, old layers removed) and re-assigns
     all targets onto it. Generic usage shares ONE set across all types via a
     single IfcRelAssociatesMaterial. Materials are found by their materialsdb
-    identity pset or created minimally (identity + style, no per-layer
-    psets). Placeholder layers (material_id None) re-attach a model material
+    identity pset or created minimally (identity + style). Resolved per-layer
+    psets are written on creation and backfilled on reuse when the material
+    lacks a `materialsdb.org_layer` pset. Placeholder layers (material_id None)
+    re-attach a model material
     by name or create one, carrying a Pset_MaterialThermal when a λ is
     given. A `u_values` map (per type class) writes `ThermalTransmittance`
     into the matching `Pset_<Type>Common` pset, created or edited in place."""
@@ -269,8 +271,12 @@ def apply_add_construction(file, payload) -> dict:
                 description=str(entry.get("description") or ""),
             )
             _add_identity_pset(file, material, entry["identity"])
+            _add_property_psets(file, material, entry.get("psets"))
             known[layer["material_id"]] = material
             summary["materials_created"] += 1
+        elif ifcopenshell.util.element.get_psets(material).get("materialsdb.org_layer") is None:
+            # reuse: only fill missing psets so a normal re-push does not duplicate
+            _add_property_psets(file, material, entry.get("psets"))
         # style reused materials too: an earlier push (or a pre-fix session)
         # may have left them colourless, and users expect the colour to show
         if _should_style(material):
