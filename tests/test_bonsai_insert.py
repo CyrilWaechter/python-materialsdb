@@ -16,6 +16,7 @@ from materialsdb.store import MaterialStore
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bonsai_addon"))
 
+import insert  # ty: ignore[unresolved-import] - add-on module on a side path
 from insert import (  # ty: ignore[unresolved-import] - add-on module on a side path
     apply_add_construction,
     apply_add_materials,
@@ -99,6 +100,43 @@ def test_apply_creates_materials_psets_layers(store):
         "00000000-0000-0000-0000-0000000000a2",
     }
     assert len(file.by_type("IfcMaterialLayerSet")) == 2
+
+
+def test_identity_pset_writes_fingerprint():
+    file = ifcopenshell.file(schema="IFC4")
+    material = ifcopenshell.api.run("material.add_material", file, name="M")
+
+    insert._add_identity_pset(
+        file,
+        material,
+        {
+            "material_id": "X",
+            "company_id": "C",
+            "company": "Co",
+            "fingerprint": "abc",
+            "fingerprint_scheme": "materialsdb-fp/1",
+        },
+    )
+
+    pset = next(p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb")
+    props = {p.Name: p.NominalValue.wrappedValue for p in pset.Properties}
+    types = {p.Name: p.NominalValue.is_a() for p in pset.Properties}
+    assert props["fingerprint"] == "abc"
+    assert props["fingerprint_scheme"] == "materialsdb-fp/1"
+    assert types["fingerprint"] == "IfcText"
+    assert types["fingerprint_scheme"] == "IfcText"
+
+
+def test_identity_pset_omits_fingerprint_when_absent():
+    file = ifcopenshell.file(schema="IFC4")
+    material = ifcopenshell.api.run("material.add_material", file, name="M")
+
+    insert._add_identity_pset(file, material, {"material_id": "X", "company_id": "C", "company": "Co"})
+
+    pset = next(p for p in file.by_type("IfcMaterialProperties") if p.Name == "materialsdb")
+    props = {p.Name: p.NominalValue.wrappedValue for p in pset.Properties}
+    assert "fingerprint" not in props
+    assert "fingerprint_scheme" not in props
 
 
 def test_apply_add_materials_creates_schema_valid_entities(store):

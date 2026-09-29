@@ -99,7 +99,17 @@ class MaterialBuilder:
         self._context = None
         self._styles = {}
 
-    def build(self, material, company_id="", company="", verxml=None, layer_ids=None, with_layers=True):
+    def build(
+        self,
+        material,
+        company_id="",
+        company="",
+        verxml=None,
+        layer_ids=None,
+        with_layers=True,
+        fingerprint=None,
+        scheme=None,
+    ):
         name = utils.get_material_name(material, self.lang)
         description = utils.get_material_description(material, self.lang)
         category = str(material.information.group or "")
@@ -111,7 +121,7 @@ class MaterialBuilder:
             if existing is not None:
                 return [existing]
             ifc_material = self.file.createIfcMaterial(name, str(description), str(category))
-            self._create_identity_pset(ifc_material, material, company_id, company, verxml)
+            self._create_identity_pset(ifc_material, material, company_id, company, verxml, fingerprint, scheme)
             self._add_style_chain(color, category)
             return [ifc_material]
         self._add_style_chain(color, category)
@@ -122,7 +132,7 @@ class MaterialBuilder:
                 continue
             ifc_material = self.file.createIfcMaterial(str(name), str(description), category)
             created.append(ifc_material)
-            self._create_identity_pset(ifc_material, material, company_id, company, verxml)
+            self._create_identity_pset(ifc_material, material, company_id, company, verxml, fingerprint, scheme)
             self._create_property_psets(ifc_material, layer)
             geometry = utils.get_by_country(layer.geometry or (), self.country)
             thick = getattr(geometry, "thick", None)
@@ -165,7 +175,7 @@ class MaterialBuilder:
             self._context = self.file.createIfcRepresentationContext()
         return self._context
 
-    def _create_identity_pset(self, ifc_material, material, company_id, company, verxml):
+    def _create_identity_pset(self, ifc_material, material, company_id, company, verxml, fingerprint=None, scheme=None):
         properties = [
             self.file.create_entity(
                 "IfcPropertySingleValue", Name="material_id", NominalValue=_ifc_text(self.file, material.id)
@@ -185,6 +195,22 @@ class MaterialBuilder:
                     NominalValue=self.file.create_entity("IfcInteger", int(verxml)),
                 )
             )
+        if fingerprint is not None:
+            properties.append(
+                self.file.create_entity(
+                    "IfcPropertySingleValue",
+                    Name="fingerprint",
+                    NominalValue=_ifc_text(self.file, fingerprint),
+                )
+            )
+            if scheme is not None:
+                properties.append(
+                    self.file.create_entity(
+                        "IfcPropertySingleValue",
+                        Name="fingerprint_scheme",
+                        NominalValue=_ifc_text(self.file, scheme),
+                    )
+                )
         self.file.create_entity(
             "IfcMaterialProperties",
             Name=MATERIALSDB_PSET,

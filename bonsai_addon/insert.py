@@ -64,16 +64,18 @@ def _existing_keys(file):
 
 def _add_identity_pset(file, material, identity):
     pset = ifcopenshell.api.run("pset.add_pset", file, product=material, name="materialsdb")
-    ifcopenshell.api.run(
-        "pset.edit_pset",
-        file,
-        pset=pset,
-        properties={
-            "material_id": identity["material_id"],
-            "company_id": identity.get("company_id") or "",
-            "company": identity.get("company") or "",
-        },
-    )
+    properties = {
+        "material_id": identity["material_id"],
+        "company_id": identity.get("company_id") or "",
+        "company": identity.get("company") or "",
+    }
+    fingerprint = identity.get("fingerprint")
+    if fingerprint is not None:
+        properties["fingerprint"] = file.create_entity("IfcText", str(fingerprint))
+        scheme = identity.get("fingerprint_scheme")
+        if scheme is not None:
+            properties["fingerprint_scheme"] = file.create_entity("IfcText", str(scheme))
+    ifcopenshell.api.run("pset.edit_pset", file, pset=pset, properties=properties)
 
 
 def _add_property_psets(file, material, psets):

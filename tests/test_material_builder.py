@@ -87,6 +87,19 @@ def _identity_id(file, material_entity):
     return None
 
 
+def _identity_props(file, material_entity):
+    for pset in file.by_type("IfcMaterialProperties"):
+        if pset.Name != MATERIALSDB_PSET:
+            continue
+        materials = pset.Material
+        if not isinstance(materials, (list, tuple)):
+            materials = [materials]
+        if material_entity not in materials:
+            continue
+        return {prop.Name: prop.NominalValue.wrappedValue for prop in pset.Properties}
+    return None
+
+
 def test_build_creates_identity_pset_and_materials(mini_source):
     file = ifcopenshell.file(schema="IFC4")
     builder = MaterialBuilder(file)
@@ -99,6 +112,38 @@ def test_build_creates_identity_pset_and_materials(mini_source):
         assert _identity_id(file, entity) == str(material.id)
     names = {p.Name for e in created for p in file.get_inverse(e) if p.is_a("IfcMaterialProperties")}
     assert MATERIALSDB_PSET in names
+
+
+def test_build_writes_fingerprint_into_identity_pset(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+
+    created = builder.build(mini_source.material[0], company="Mini SA", fingerprint="abc", scheme="materialsdb-fp/1")
+
+    assert created
+    for entity in created:
+        props = _identity_props(file, entity)
+        assert props["fingerprint"] == "abc"
+        assert props["fingerprint_scheme"] == "materialsdb-fp/1"
+        pset = next(
+            p for p in file.get_inverse(entity) if p.is_a("IfcMaterialProperties") and p.Name == MATERIALSDB_PSET
+        )
+        types = {prop.Name: prop.NominalValue.is_a() for prop in pset.Properties}
+        assert types["fingerprint"] == "IfcText"
+        assert types["fingerprint_scheme"] == "IfcText"
+
+
+def test_material_builder_identity_omits_fingerprint_when_absent(mini_source):
+    file = ifcopenshell.file(schema="IFC4")
+    builder = MaterialBuilder(file)
+
+    created = builder.build(mini_source.material[0], company="Mini SA")
+
+    assert created
+    for entity in created:
+        props = _identity_props(file, entity)
+        assert "fingerprint" not in props
+        assert "fingerprint_scheme" not in props
 
 
 def test_build_without_layers_creates_nothing(mini_source):
