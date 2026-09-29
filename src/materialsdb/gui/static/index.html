@@ -23,6 +23,15 @@
  tr.layerrow td { padding-left: 2rem; color: #555; background: #fafcff; }
  #drawer { border-top: 2px solid #99c; padding: .5rem; background: #fdfdff; }
  .stackbar { display: flex; height: 44px; border: 1px solid #999; margin: .3rem 0; }
+ #model-changes { color:#a33; background:#fff3f3; border:1px solid #a33; border-radius:3px; padding:.1rem .4rem; }
+ .model-badge { font-size:.72rem; padding:.05rem .35rem; border-radius:3px; margin-left:.35rem; background:#eee; color:#333; }
+ .model-badge[data-status="changed"] { background:#fff3f3; color:#a33; border:1px solid #a33; }
+ .model-badge[data-status="unknown"] { background:#fffbe6; color:#8a6d00; border:1px solid #d6b656; }
+ .model-badge[data-status="gone"] { background:#f3f3f3; color:#666; border:1px solid #999; }
+ #change-report { border:1px solid #99c; background:#fdfdff; padding:.5rem; margin:.4rem 0; }
+ #change-report table { width:auto; }
+ #change-report td { border:none; padding:.1rem .4rem; }
+ .change-unavailable { color:#888; font-style:italic; }
 </style>
 </head>
 <body>
@@ -41,11 +50,13 @@
   <button id="save">save session</button>
   <button id="refresh">refresh cache</button>
   <span id="updates" style="display:none;color:#a33;background:#fff3f3;border:1px solid #a33;border-radius:3px;padding:.1rem .4rem">newer data available on materialsdb.org — refresh when convenient</span>
+  <span id="model-changes" style="display:none"></span>
   <button id="send-bonsai" disabled>send to:</button>
   <select id="bonsai-target" style="display:none"></select>
  </div>
  <p id="status"></p>
  <p id="hint" style="display:none;color:#888;margin:.2rem 0"></p>
+ <div id="change-report" style="display:none"></div>
  <table><thead><tr id="header-row"></tr></thead>
  <tbody id="rows"></tbody></table>
 </div>

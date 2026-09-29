@@ -27,6 +27,10 @@ const detailCache = new Map();
 const expanded = new Set();
 const layerSelections = new Map();   // materialId -> Set(sourceLayerGuid); absent = whole material
 let lastSelectedId = null;
+// `/api/model/changes` payload + per-material update/replace choices.
+let modelChanges = null;
+const modelChoices = new Map();   // materialId -> {mode, candidates, update, replaces}
+let pendingReplace = null;        // changed material awaiting a replacement pick
 if (isEmbed) {
   const _buildItems = () => {
     const items = [];
@@ -195,6 +199,17 @@ function matchesFacets(m) {
 
 let renderGeneration = 0;
 
+function modelBadgeHtml(m) {
+  const status = m.model;
+  if (!status || status === "absent") return "";
+  return `<span class="model-badge" data-status="${esc(status)}">${esc(MODEL_BADGES[status] || status)}</span>`;
+}
+
+function modelReportActionHtml(m) {
+  if (m.model !== "changed") return "";
+  return `<span class="model-actions"><button data-model-action="changes" data-id="${esc(m.id)}">review changes</button></span>`;
+}
+
 async function applyModel() {
   const generation = ++renderGeneration;
   const needle = $("text").value.trim().toLowerCase();
@@ -221,18 +236,23 @@ async function applyModel() {
     visible += 1;
     const tr = document.createElement("tr");
     tr.dataset.id = m.id;
+    if (m.model && m.model !== "absent") tr.dataset.modelStatus = m.model;
     const usage = usageWords(m).map(esc).join(" ");
     const pickCell = m.type === "simple"
       ? `<td><span class="expander" data-id="${esc(m.id)}" style="cursor:pointer">${expanded.has(m.id) ? "\u25be" : "\u25b8"}</span>` +
         `<input type="checkbox" title="checked = pick whole material (all layers); untick to choose layers below"></td>`
       : `<td><input type="checkbox" title="pick whole material"></td>`;
     tr.innerHTML = pickCell +
-      `<td>${esc(m.display_name)}</td><td>${esc(m.company)}</td><td>${esc(m.category)}</td><td>${esc(m.type)}</td>` +
+      `<td>${esc(m.display_name)} ${modelBadgeHtml(m)}${modelReportActionHtml(m)}</td>` +
+      `<td>${esc(m.company)}</td><td>${esc(m.category)}</td><td>${esc(m.type)}</td>` +
       `<td>${esc(fmt([m.lambda_min, m.lambda_max]))}</td><td>${esc(fmt([m.thick_min, m.thick_max], 0))}</td>` +
       `<td>${usage}</td>`;
     const [checkbox] = tr.getElementsByTagName("input");
     checkbox.onchange = () => {
-      if (checkbox.checked) layerSelections.delete(m.id);   // parent checked = all layers
+      if (checkbox.checked) {
+        layerSelections.delete(m.id);   // parent checked = all layers
+        if (pendingReplace && pendingReplace !== m.id) applyReplace(pendingReplace, m.id);
+      }
       checkbox.checked ? selected.add(m.id) : selected.delete(m.id);
       document.querySelectorAll(`tr.layerrow[data-parent="${m.id}"] input[data-layer]`)
         .forEach((el) => { el.checked = false; });
@@ -244,8 +264,10 @@ async function applyModel() {
     });
     tr.addEventListener("click", (event) => {
       if (event.target.tagName === "INPUT") return;
+      if (event.target.closest && event.target.closest("[data-model-action]")) return;
       document.querySelectorAll("tr.selected").forEach((el) => el.classList.remove("selected"));
       tr.classList.add("selected");
+      if (pendingReplace && pendingReplace !== m.id) applyReplace(pendingReplace, m.id);
       showDetail(m.id);
     });
     rowsEl.appendChild(tr);
@@ -399,7 +421,7 @@ async function saveSession() {
 }
 
 async function sendToBonsai() {
-  const items = PickerCore.collectItems(selected, layerSelections);
+  const items = sendSelected();
   if (!items.length) return setStatus("select at least one material or layer");
   const client_id = bonsaiTarget.current();
   if (!client_id) return setStatus("no Bonsai listener connected");
@@ -421,11 +443,180 @@ async function syncUpdatesBanner() {
   } catch {}
 }
 
+const MODEL_BADGES = { changed: "changed", current: "up to date", gone: "missing", unknown: "legacy" };
+const shortId = (id) => `${String(id ?? "").slice(0, 8)}\u2026`;
+
+function fmtReportValue(value) {
+  if (value === null || value === undefined || value === "") return "\u2014";
+  return String(value);
+}
+
+function changedItem(materialId) {
+  return ((modelChanges && modelChanges.changed) || []).find((entry) => entry.material_id === materialId) || null;
+}
+
+function renderModelChanges(data) {
+  modelChanges = data || { counts: {}, changed: [] };
+  const banner = document.getElementById("model-changes");
+  if (banner) {
+    const counts = modelChanges.counts || {};
+    const total = (counts.changed || 0) + (counts.gone || 0) + (counts.unknown || 0);
+    if (!modelChanges.model_path || !total) {
+      banner.style.display = "none";
+      banner.textContent = "";
+    } else {
+      banner.style.display = "inline";
+      banner.textContent =
+        `${counts.changed || 0} changed in model \u00b7 ${counts.gone || 0} missing \u00b7 ${counts.unknown || 0} legacy`;
+      banner.title = modelChanges.model_path;
+    }
+  }
+  applyModel();
+}
+
+async function refreshModelChanges() {
+  try {
+    renderModelChanges(await api("/api/model/changes"));
+  } catch {
+    renderModelChanges(null);
+  }
+}
+
+function candidateOption(candidate) {
+  const id = typeof candidate === "string" ? candidate : String(candidate.layer_id ?? candidate.id ?? "");
+  const thick = typeof candidate === "object" ? (candidate.thick ?? candidate.thickness) : null;
+  const label = thick !== null && thick !== undefined ? `${Math.round(Number(thick) * 1000)} mm` : shortId(id);
+  return `<option value="${esc(id)}">${esc(label)}</option>`;
+}
+
+function chooseLayerMapping(materialId) {
+  const item = changedItem(materialId);
+  const candidates = (item && item.matching && item.matching.candidates) || {};
+  const layers = Object.entries(candidates);
+  if (!layers.length) return "";
+  const selects = layers.map(([modelLayerId, list]) => {
+    const options = (list || []).map(candidateOption).join("");
+    return `<label class="model-layer-map" style="display:block">${esc(shortId(modelLayerId))} \u2192 ` +
+      `<select data-model-layer="${esc(modelLayerId)}" data-id="${esc(materialId)}">${options}</select></label>`;
+  }).join("");
+  return `<div class="model-layer-mapping">${selects}</div>`;
+}
+
+function openChangeReport(materialId) {
+  const box = document.getElementById("change-report");
+  if (!box) return;
+  const item = changedItem(materialId);
+  if (!item) {
+    box.innerHTML = "";
+    box.style.display = "none";
+    return;
+  }
+  box.style.display = "block";
+  const matching = item.matching || {};
+  const choice = modelChoices.get(materialId) || {};
+  const reportRows = (item.report || []).map((row) =>
+    `<tr><td>${esc(row.field)}</td><td>${esc(fmtReportValue(row.old))}</td><td>\u2192</td>` +
+    `<td>${esc(fmtReportValue(row.new))}</td></tr>`).join("");
+  let detail;
+  if (item.has_snapshot === false) detail = `<div class="change-unavailable">details unavailable</div>`;
+  else if (reportRows) detail = `<table class="change-report">${reportRows}</table>`;
+  else detail = `<div class="change-report-empty">no field changes recorded</div>`;
+  const canUpdate = matching.state === "updatable";
+  const canReplace = matching.state === "unmatched" || matching.state === "ambiguous";
+  const actions = [];
+  if (canUpdate) actions.push(`<button data-model-action="update" data-id="${esc(materialId)}">Update</button>`);
+  if (canReplace) actions.push(`<button data-model-action="replace" data-id="${esc(materialId)}">Replace\u2026</button>`);
+  actions.push(`<button data-model-action="keep" data-id="${esc(materialId)}">Keep</button>`);
+  const chosen = choice.mode ? `<span class="model-choice">chosen: ${esc(choice.mode)}</span>` : "";
+  box.innerHTML =
+    `<b>changes \u2014 ${esc(shortId(materialId))}</b> <span class="model-state">${esc(matching.state || "unknown")}</span>` +
+    detail + chooseLayerMapping(materialId) +
+    `<div class="model-actions">${actions.join(" ")} ${chosen}</div>`;
+}
+
+function setModelMode(materialId, mode) {
+  const choice = modelChoices.get(materialId) || {};
+  if (mode === "skip") {
+    modelChoices.delete(materialId);
+  } else {
+    choice.mode = mode;
+    if (mode === "update") {
+      const item = changedItem(materialId);
+      const mapping = (item && item.matching && item.matching.mapping) || {};
+      choice.update = { ...mapping, ...(choice.candidates || {}) };
+    }
+    modelChoices.set(materialId, choice);
+  }
+  openChangeReport(materialId);
+  setStatus(`model change for ${shortId(materialId)}: ${mode}`);
+}
+
+function beginReplace(materialId) {
+  pendingReplace = materialId;
+  setStatus(`pick a replacement material from the list for ${shortId(materialId)}`);
+}
+
+function applyReplace(oldId, newId) {
+  modelChoices.delete(oldId);
+  const choice = modelChoices.get(newId) || {};
+  choice.mode = "replace";
+  choice.replaces = { material_id: oldId };
+  modelChoices.set(newId, choice);
+  pendingReplace = null;
+  setStatus(`${shortId(newId)} will replace changed ${shortId(oldId)}`);
+}
+
+function sendSelected() {
+  /* collectItems union enriched with the per-material model-change choice:
+   * `update` carries the resolved layer mapping plus any user-picked candidates. */
+  const items = PickerCore.collectItems(selected, layerSelections);
+  for (const item of items) {
+    const choice = modelChoices.get(item.id);
+    if (!choice || !choice.mode || choice.mode === "skip") continue;
+    item.mode = choice.mode;
+    if (choice.mode === "update") {
+      const current = changedItem(item.id);
+      const mapping = (current && current.matching && current.matching.mapping) || {};
+      item.update = { ...mapping, ...(choice.candidates || {}), ...(choice.update || {}) };
+    } else if (choice.mode === "replace" && choice.replaces) {
+      item.replaces = choice.replaces;
+    }
+  }
+  return items;
+}
+
 $("export").onclick = () => pickIds("export").catch((err) => setStatus(err.message));
 $("pick").onclick = () => pickIds("pick").catch((err) => setStatus(err.message));
 $("open").onclick = () => openSession().catch((err) => setStatus(err.message));
 $("save").onclick = () => saveSession().catch((err) => setStatus(err.message));
 $("refresh").onclick = runRefresh;
+
+$("rows").addEventListener("click", (event) => {
+  const button = event.target.closest && event.target.closest("[data-model-action]");
+  if (!button || button.dataset.modelAction !== "changes") return;
+  event.stopPropagation();
+  openChangeReport(button.dataset.id);
+});
+
+$("change-report").addEventListener("click", (event) => {
+  const button = event.target.closest && event.target.closest("[data-model-action]");
+  if (!button) return;
+  const materialId = button.dataset.id;
+  if (!materialId) return;
+  if (button.dataset.modelAction === "update") setModelMode(materialId, "update");
+  else if (button.dataset.modelAction === "replace") beginReplace(materialId);
+  else if (button.dataset.modelAction === "keep") setModelMode(materialId, "skip");
+});
+
+$("change-report").addEventListener("change", (event) => {
+  const select = event.target;
+  const modelLayerId = select && select.dataset && select.dataset.modelLayer;
+  const materialId = select && select.dataset && select.dataset.id;
+  if (!modelLayerId || !materialId) return;
+  const choice = modelChoices.get(materialId) || {};
+  choice.candidates = { ...(choice.candidates || {}), [modelLayerId]: select.value };
+  modelChoices.set(materialId, choice);
+});
 
 async function runRefresh() {
   const existing = document.getElementById("refresh-overlay");
@@ -476,6 +667,7 @@ async function runRefresh() {
   }
   await loadMaterials();
   await syncUpdatesBanner();
+  await refreshModelChanges();
 }
 $("send-bonsai").onclick = () => sendToBonsai().catch((err) => setStatus(err.message));
 const bonsaiTarget = PickerCore.startTargetPoll(api, $("bonsai-target"), $("send-bonsai"));
@@ -492,6 +684,7 @@ $("lang").addEventListener("change", async () => {
   detailCache.clear();
   await loadMaterials();
   await syncUpdatesBanner();
+  await refreshModelChanges();
 });
 
 $("country").addEventListener("change", async () => {
@@ -499,6 +692,7 @@ $("country").addEventListener("change", async () => {
   detailCache.clear();
   await loadMaterials();
   await syncUpdatesBanner();
+  await refreshModelChanges();
 });
 
 $("preview").onclick = async () => {
@@ -514,3 +708,4 @@ document.getElementById("settings-tab").addEventListener("click", (e) => {
 
 loadMaterials();
 syncUpdatesBanner();
+refreshModelChanges();
