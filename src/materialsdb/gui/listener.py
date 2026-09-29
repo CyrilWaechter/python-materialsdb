@@ -6,6 +6,7 @@ maps the payload onto its open file without importing this library."""
 
 from materialsdb import config, utils
 from materialsdb.ifc.material_builder import PSETS, get_value, style_for
+from materialsdb.store import FINGERPRINT_SCHEME
 
 
 def _resolved_psets(layer, country) -> dict:
@@ -74,7 +75,12 @@ def build_add_materials_payload(store_, items, country=None, lang=None):
                         "material_id": material_id,
                         "company_id": str(summary.company_id or ""),
                         "company": str(summary.company or ""),
+                        "fingerprint": store_.material_fingerprint(material_id),
+                        "fingerprint_scheme": FINGERPRINT_SCHEME,
                     },
+                    "mode": item.get("mode", "skip"),
+                    "replaces": item.get("replaces"),
+                    "update": item.get("update"),
                     "psets": _resolved_psets(layer, country),
                     "layer": {"layer_id": str(layer.id), "thick_m": thick / 1000} if thick else None,
                 }
@@ -136,9 +142,12 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
         return None, problems
     country = country or config.get_country()
     lang = lang or config.get_lang()
+    raw_layers: list = []
+    if isinstance(body.get("layers"), list):
+        raw_layers = body["layers"]
     layers = []
     warnings = []
-    for layer in construction.layers:
+    for index, layer in enumerate(construction.layers):
         if layer.placeholder is not None:
             layers.append(
                 {
@@ -156,6 +165,7 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
         resolved_layer, warning = _resolve_construction_layer(material, layer.thickness_m, country, lang)
         if warning is not None:
             warnings.append(warning)
+        raw_layer = raw_layers[index] if index < len(raw_layers) else {}
         color = getattr(material.information, "color", None)
         color = int(color) if color else None
         category = str(getattr(material.information, "group", "") or "")
@@ -172,7 +182,12 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
                 "material_id": layer.material_id,
                 "company_id": str(summary.company_id or ""),
                 "company": str(summary.company or ""),
+                "fingerprint": store_.material_fingerprint(layer.material_id),
+                "fingerprint_scheme": FINGERPRINT_SCHEME,
             },
+            "mode": raw_layer.get("mode", "skip"),
+            "replaces": raw_layer.get("replaces"),
+            "update": raw_layer.get("update"),
         }
         if resolved_layer is not None:
             material_entry["psets"] = _resolved_psets(resolved_layer, country)

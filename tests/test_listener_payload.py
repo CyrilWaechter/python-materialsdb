@@ -39,6 +39,8 @@ def test_payload_one_entry_per_layer(store):
         "material_id": "00000000-0000-0000-0000-000000000001",
         "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
         "company": "Mini SA",
+        "fingerprint": store.material_fingerprint("00000000-0000-0000-0000-000000000001"),
+        "fingerprint_scheme": "materialsdb-fp/1",
     }
     assert first["layer"]["layer_id"] == "00000000-0000-0000-0000-0000000000a1"
     assert first["layer"]["thick_m"] == 0.2  # 200 mm
@@ -162,6 +164,8 @@ def test_build_add_construction_payload_shape(store):
         "material_id": "00000000-0000-0000-0000-000000000001",
         "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
         "company": "Mini SA",
+        "fingerprint": store.material_fingerprint("00000000-0000-0000-0000-000000000001"),
+        "fingerprint_scheme": "materialsdb-fp/1",
     }
     assert "psets" in first  # resolved psets now travel with the material
 
@@ -338,6 +342,67 @@ def test_construction_payload_no_u_values_when_lambda_unresolvable(store):
 
     assert payload is None
     assert problems == ["unknown material id: 00000000-0000-0000-0000-000000000004"]
+
+
+def test_payload_carries_fingerprint_and_default_skip(store):
+    payload, _ = build_add_materials_payload(store, [{"id": "00000000-0000-0000-0000-000000000001"}])
+    first = payload["materials"][0]
+    assert first["mode"] == "skip" and first["replaces"] is None and first["update"] is None
+    assert first["identity"]["fingerprint_scheme"] == "materialsdb-fp/1"
+    assert first["identity"]["fingerprint"]
+
+
+def test_payload_carries_update_mapping(store):
+    payload, _ = build_add_materials_payload(
+        store,
+        [
+            {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "mode": "update",
+                "update": {"00000000-0000-0000-0000-0000000000a1": "00000000-0000-0000-0000-0000000000a1"},
+            }
+        ],
+    )
+    assert payload["materials"][0]["mode"] == "update"
+    assert payload["materials"][0]["update"]
+
+
+def test_payload_carries_replaces(store):
+    replaces = {
+        "material_id": "00000000-0000-0000-0000-000000000009",
+        "layer_id": "00000000-0000-0000-0000-0000000000c1",
+    }
+    payload, _ = build_add_materials_payload(
+        store, [{"id": "00000000-0000-0000-0000-000000000001", "mode": "replace", "replaces": replaces}]
+    )
+    first = payload["materials"][0]
+    assert first["mode"] == "replace"
+    assert first["replaces"] == replaces
+
+
+def test_construction_payload_carries_fingerprint_mode_and_update(store):
+    update = {"00000000-0000-0000-0000-0000000000c1": "00000000-0000-0000-0000-0000000000b1"}
+    payload, problems = build_add_construction_payload(
+        store,
+        body={
+            "name": "w",
+            "layers": [
+                {
+                    "material_id": "00000000-0000-0000-0000-000000000002",
+                    "thickness_m": 0.15,
+                    "mode": "update",
+                    "update": update,
+                }
+            ],
+        },
+    )
+    assert problems == []
+    material = payload["construction"]["layers"][0]["material"]
+    assert material["mode"] == "update"
+    assert material["update"] == update
+    assert material["replaces"] is None
+    assert material["identity"]["fingerprint_scheme"] == "materialsdb-fp/1"
+    assert material["identity"]["fingerprint"]
 
 
 def test_payload_carries_resolved_producer_style(store):
