@@ -6,8 +6,10 @@ and hands payloads to an undoable operator (tool.Ifc.Operator); all IFC work
 goes through insert.py (pure ifcopenshell.api, CI-tested)."""
 
 import atexit
+import os
 import shutil
 import subprocess
+import tempfile
 import typing
 import webbrowser
 
@@ -15,12 +17,19 @@ import bpy
 from bonsai import tool
 
 from . import insert
-from .discovery import ListenerClient, clear_gui_info, read_gui_info
+from .discovery import ListenerClient, _cache_folder, clear_gui_info, read_gui_info
 from .read_construction import ReadError, read_construction_from_element
 
 _CLIENT = None
 _PENDING = None
 _SERVER_PROC = None
+_SERVER_LOG = None
+
+# Entry point for the server subprocess. Spelled out instead of `-m
+# materialsdb.gui`: under a VSCode/debugpy-launched Blender the injected child
+# environment can make `-m` resolve a stale `materialsdb` (without `gui`),
+# while the same import works via -c.
+_SERVER_CODE = "from materialsdb.gui.__main__ import main; main()"
 
 
 class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
@@ -178,7 +187,7 @@ def _server_alive(url):
 
 
 def _kill_server():
-    global _SERVER_PROC
+    global _SERVER_PROC, _SERVER_LOG
     if _SERVER_PROC is not None:
         _SERVER_PROC.terminate()
         try:
@@ -186,6 +195,42 @@ def _kill_server():
         except subprocess.TimeoutExpired:
             _SERVER_PROC.kill()
         _SERVER_PROC = None
+    if _SERVER_LOG is not None:
+        try:
+            _SERVER_LOG.close()
+        except OSError:
+            pass
+        _SERVER_LOG = None
+
+
+def _child_cwd():
+    """Run the server from a neutral directory: a `materialsdb` folder in the
+    working directory (e.g. the repo root, or a VSCode workspace) would shadow
+    the installed package on the child's sys.path[0]."""
+    return tempfile.gettempdir()
+
+
+def _child_env():
+    """Environment for the server subprocess. PYTHONHOME is dropped: a
+    Blender/VSCode process may carry one for its bundled Python, which breaks a
+    system interpreter. PYTHONPATH is kept so a dev checkout on it still wins."""
+    env = dict(os.environ)
+    env.pop("PYTHONHOME", None)
+    return env
+
+
+def _server_log_path():
+    folder = _cache_folder()
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "gui.log"
+
+
+def _server_log_tail(lines=10):
+    try:
+        text = _server_log_path().read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return "\n".join(text.strip().splitlines()[-lines:])
 
 
 class MATERIALSDB_Preferences(bpy.types.AddonPreferences):
@@ -212,7 +257,7 @@ class MATERIALSDB_OT_start_server(bpy.types.Operator):
     bl_options: typing.ClassVar[set[str]] = {"REGISTER"}
 
     def execute(self, context):
-        global _SERVER_PROC
+        global _SERVER_PROC, _SERVER_LOG
         url = _server_url()
         if url is not None and _server_alive(url):
             webbrowser.open(url)
@@ -225,14 +270,39 @@ class MATERIALSDB_OT_start_server(bpy.types.Operator):
             self.report({"ERROR"}, "no python interpreter found; set one in the add-on preferences")
             return {"CANCELLED"}
         try:
-            subprocess.run([python, "-c", "import materialsdb"], capture_output=True, timeout=30, check=True)
-        except (subprocess.SubprocessError, OSError):
-            self.report({"ERROR"}, f"pip install python-materialsdb in {python} (import failed)")
+            check = subprocess.run(
+                [python, "-c", "import materialsdb.gui"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+                cwd=_child_cwd(),
+                env=_child_env(),
+            )
+        except (subprocess.SubprocessError, OSError) as err:
+            self.report({"ERROR"}, f"could not run {python}: {err}")
             return {"CANCELLED"}
-        args = [python, "-m", "materialsdb.gui", "--no-browser"]
+        if check.returncode != 0:
+            lines = (check.stderr or check.stdout or "").strip().splitlines()
+            detail = lines[-1] if lines else f"exit code {check.returncode}"
+            self.report(
+                {"ERROR"},
+                f"{python} cannot import materialsdb.gui: {detail} — install/upgrade "
+                "python-materialsdb there, or set another interpreter in the add-on preferences",
+            )
+            return {"CANCELLED"}
+        args = [python, "-c", _SERVER_CODE, "--no-browser"]
         if _server_port():
             args += ["--port", str(_server_port())]
-        _SERVER_PROC = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # handle kept open for the process lifetime; closed by _kill_server()
+        _SERVER_LOG = open(_server_log_path(), "w", encoding="utf-8")  # noqa: SIM115
+        _SERVER_PROC = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=_SERVER_LOG,
+            cwd=_child_cwd(),
+            env=_child_env(),
+        )
         atexit.register(_kill_server)
         import time
 
@@ -245,7 +315,7 @@ class MATERIALSDB_OT_start_server(bpy.types.Operator):
         if url is None:
             self.report(
                 {"ERROR"},
-                f"server did not start — run '{python} -m materialsdb.gui' in a terminal to see the error",
+                f"server did not start — log: {_server_log_path()}\n{_server_log_tail()}",
             )
             _kill_server()
             return {"CANCELLED"}
