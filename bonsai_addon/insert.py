@@ -62,6 +62,137 @@ def _existing_keys(file):
     return found
 
 
+def _fingerprint_of(material) -> str | None:
+    return ifcopenshell.util.element.get_psets(material).get("materialsdb", {}).get("fingerprint")
+
+
+def _write_fingerprint(file, material, identity) -> None:
+    """Bookkeeping backfill for a legacy material: stamp the server's fingerprint
+    (and scheme) onto its identity pset without touching anything else."""
+    fingerprint = identity.get("fingerprint")
+    if fingerprint is None:
+        return
+    found = ifcopenshell.util.element.get_pset(material, name="materialsdb")
+    if found is None:
+        pset = ifcopenshell.api.run("pset.add_pset", file, product=material, name="materialsdb")
+    else:
+        pset = file.by_id(found["id"])
+    properties = {"fingerprint": file.create_entity("IfcText", str(fingerprint))}
+    scheme = identity.get("fingerprint_scheme")
+    if scheme is not None:
+        properties["fingerprint_scheme"] = file.create_entity("IfcText", str(scheme))
+    ifcopenshell.api.run("pset.edit_pset", file, pset=pset, properties=properties)
+
+
+def _backfill_fingerprints(file, material_id, identity) -> None:
+    """Legacy baseline: write the entry's fingerprint onto every model entity of
+    the material that lacks one (bookkeeping only, no warning)."""
+    if identity.get("fingerprint") is None:
+        return
+    for entities in _model_layers(file, material_id).values():
+        for model_material, _layer in entities:
+            if _fingerprint_of(model_material) is None:
+                _write_fingerprint(file, model_material, identity)
+
+
+def _purge_our_psets(file, material) -> None:
+    """Remove the materialsdb psets (identity, org layer and resolved) so a
+    refresh replaces their property values instead of layering new ones on top.
+    Foreign psets are kept."""
+    for pset in list(file.get_inverse(material)):
+        if not pset.is_a("IfcMaterialProperties"):
+            continue
+        name = pset.Name or ""
+        if name == "materialsdb" or name.startswith("materialsdb."):
+            for prop in list(pset.Properties):
+                file.remove(prop)
+            file.remove(pset)
+
+
+def _layer_of(file, material):
+    for layer in file.by_type("IfcMaterialLayer"):
+        if layer.Material is not None and layer.Material.id() == material.id():
+            return layer
+    return None
+
+
+def _model_layers(file, material_id) -> dict[str, list[tuple]]:
+    """model layer id -> [(IfcMaterial, IfcMaterialLayer | None)] for a material.
+
+    The key is the `materialsdb.org_layer.layer_id` (None when absent)."""
+    found: dict[str, list[tuple]] = {}
+    for material in file.by_type("IfcMaterial"):
+        if _material_id_of(material) != material_id:
+            continue
+        found.setdefault(_org_layer_id_of(material), []).append((material, _layer_of(file, material)))
+    return found
+
+
+def _entry_layer_id(entry) -> str | None:
+    if entry.get("layer_id"):
+        return entry["layer_id"]
+    return (entry.get("psets") or {}).get("materialsdb.org_layer", {}).get("layer_id")
+
+
+def _entry_thickness(entry) -> float | None:
+    org_layer = (entry.get("psets") or {}).get("materialsdb.org_layer") or {}
+    thickness = org_layer.get("thick")
+    if thickness is None:
+        thickness = (entry.get("layer") or {}).get("thick_m")
+    return float(thickness) if thickness is not None else None
+
+
+def _refresh_material(file, entry, material) -> None:
+    """Replace our psets/attributes on an existing IfcMaterial in place."""
+    _purge_our_psets(file, material)
+    _add_identity_pset(file, material, entry["identity"])
+    _add_property_psets(file, material, entry.get("psets"))
+    material.Name = str(entry["name"])
+    material.Description = str(entry.get("description") or "")
+    material.Category = str(entry.get("category") or "")
+    if _should_style(material):
+        _apply_style(file, entry, material)
+
+
+def _refresh_layer(file, entry, layer) -> None:
+    thickness = _entry_thickness(entry)
+    if thickness is None:
+        return
+    layer.LayerThickness = thickness
+    layer.Name = f"{entry['name']} | {round(thickness * 1000)}mm"
+    layer.Description = str(_entry_layer_id(entry) or "")
+
+
+def _apply_update(file, entry, material, layers_by_id, summary) -> None:
+    """Refresh the model layer(s) that map to this entry's new layer id.
+
+    Only mappings whose new layer id equals the entry's own layer id are this
+    entry's responsibility. A mapping to a model layer absent from
+    `layers_by_id` is recorded in `summary["update_missing"]`; a legacy entity
+    with no fingerprint is backfilled; an entity whose fingerprint already
+    matches is left alone."""
+    new_layer_id = _entry_layer_id(entry)
+    new_fingerprint = entry["identity"].get("fingerprint")
+    for model_layer_id, mapped_new_id in (entry.get("update") or {}).items():
+        if mapped_new_id != new_layer_id:
+            continue
+        entities = layers_by_id.get(model_layer_id)
+        if not entities:
+            if model_layer_id not in summary["update_missing"]:
+                summary["update_missing"].append(model_layer_id)
+            continue
+        for model_material, model_layer in entities:
+            current = _fingerprint_of(model_material)
+            if current is None:
+                _write_fingerprint(file, model_material, entry["identity"])
+                continue
+            if current == new_fingerprint:
+                continue
+            _refresh_material(file, entry, model_material)
+            if model_layer is not None:
+                _refresh_layer(file, entry, model_layer)
+
+
 def _add_identity_pset(file, material, identity):
     pset = ifcopenshell.api.run("pset.add_pset", file, product=material, name="materialsdb")
     properties = {
@@ -192,14 +323,35 @@ def _create_placeholder_material(file, placeholder):
 def apply_add_materials(file, payload) -> int:
     """Create IfcMaterial (+ identity/property psets, layer + set, style) per
     payload entry. Entries whose (material_id, layer_id) key already exists are
-    re-styled when their colour is ours or missing. Returns the number created."""
+    re-styled when their colour is ours or missing. An existing material whose
+    stored fingerprint differs from the entry's is left alone (mode "skip") or
+    refreshed in place per the entry's `update` mapping (mode "update"); a
+    legacy material without a fingerprint gets the baseline stamped on it.
+    Returns the number created."""
     existing = _existing_keys(file)
+    known_by_id = existing_materials_by_id(file)
     created = 0
+    summary = {"update_missing": [], "changed_skipped": []}
     for entry in payload.get("materials") or []:
         identity = entry["identity"]
+        material_id = identity["material_id"]
+        mode = entry.get("mode", "skip")
         layer = entry.get("layer") or {}
         org_layer_id = (entry.get("psets") or {}).get("materialsdb.org_layer", {}).get("layer_id")
-        key = (identity["material_id"], layer.get("layer_id") or org_layer_id)
+        key = (material_id, layer.get("layer_id") or org_layer_id)
+        current = known_by_id.get(material_id)
+        if current is not None:
+            if mode == "update":
+                _apply_update(file, entry, current, _model_layers(file, material_id), summary)
+                continue
+            current_fingerprint = _fingerprint_of(current)
+            new_fingerprint = identity.get("fingerprint")
+            if current_fingerprint is None:
+                _backfill_fingerprints(file, material_id, identity)
+            elif new_fingerprint is not None and current_fingerprint != new_fingerprint:
+                if material_id not in summary["changed_skipped"]:
+                    summary["changed_skipped"].append(material_id)
+                continue
         if key in existing:
             if _should_style(existing[key]):
                 _apply_style(file, entry, existing[key])
@@ -228,6 +380,7 @@ def apply_add_materials(file, payload) -> int:
             )
         _apply_style(file, entry, material)
         existing[key] = material
+        known_by_id.setdefault(material_id, material)
         created += 1
     return created
 
@@ -247,9 +400,17 @@ def apply_add_construction(file, payload) -> dict:
     given. A `u_values` map (per type class) writes `ThermalTransmittance`
     into the matching `Pset_<Type>Common` pset, created or edited in place."""
     construction = payload["construction"]
-    summary = {"types_created": 0, "sets_updated": 0, "materials_created": 0, "placeholders_matched": 0}
+    summary = {
+        "types_created": 0,
+        "sets_updated": 0,
+        "materials_created": 0,
+        "placeholders_matched": 0,
+        "update_missing": [],
+        "changed_skipped": [],
+    }
 
     known = _existing_keys(file)
+    known_by_id = existing_materials_by_id(file)
     layers = []
     for layer in construction["layers"]:
         if layer.get("placeholder") is not None:
@@ -263,9 +424,30 @@ def apply_add_construction(file, payload) -> dict:
             layers.append((layer, material))
             continue
         entry = layer["material"]
+        identity = entry["identity"]
+        material_id = identity["material_id"]
+        mode = entry.get("mode", "skip")
         org_layer_id = (entry.get("psets") or {}).get("materialsdb.org_layer", {}).get("layer_id")
-        key = (entry["identity"]["material_id"], org_layer_id)
+        key = (material_id, org_layer_id)
         material = known.get(key)
+        current = known_by_id.get(material_id)
+        changed = False
+        if current is not None:
+            if mode == "update":
+                _apply_update(file, entry, current, _model_layers(file, material_id), summary)
+                if material is None:
+                    material = current
+            else:
+                current_fingerprint = _fingerprint_of(current)
+                new_fingerprint = identity.get("fingerprint")
+                if current_fingerprint is None:
+                    _backfill_fingerprints(file, material_id, identity)
+                elif new_fingerprint is not None and current_fingerprint != new_fingerprint:
+                    if material_id not in summary["changed_skipped"]:
+                        summary["changed_skipped"].append(material_id)
+                    changed = True
+                    if material is None:
+                        material = current
         if material is None:
             material = ifcopenshell.api.run(
                 "material.add_material",
@@ -277,10 +459,12 @@ def apply_add_construction(file, payload) -> dict:
             _add_identity_pset(file, material, entry["identity"])
             _add_property_psets(file, material, entry.get("psets"))
             known[key] = material
+            known_by_id.setdefault(material_id, material)
             summary["materials_created"] += 1
         # style reused materials too: an earlier push (or a pre-fix session)
-        # may have left them colourless, and users expect the colour to show
-        if _should_style(material):
+        # may have left them colourless, and users expect the colour to show.
+        # A changed "skip" leaves the material untouched entirely.
+        if not changed and _should_style(material):
             _apply_style(file, entry, material)
         layers.append((layer, material))
 

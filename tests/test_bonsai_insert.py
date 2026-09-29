@@ -374,6 +374,123 @@ def test_apply_thick_less_layer_is_idempotent():
     assert len(file.by_type("IfcMaterial")) == 1
 
 
+A1 = "00000000-0000-0000-0000-0000000000a1"
+A2 = "00000000-0000-0000-0000-0000000000a2"
+MATERIAL_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _fingerprint_of(material):
+    return ifcopenshell.util.element.get_psets(material).get("materialsdb", {}).get("fingerprint")
+
+
+def _material_at(file, layer_id):
+    return next(m for m in file.by_type("IfcMaterial") if insert._org_layer_id_of(m) == layer_id)
+
+
+def test_model_layers_groups_by_org_layer(store):
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_materials(file, _payload(store))
+
+    layers = insert._model_layers(file, MATERIAL_ID)
+
+    assert set(layers) == {A1, A2}
+    for entities in layers.values():
+        assert len(entities) == 1
+        material, layer = entities[0]
+        assert layer is not None
+        assert layer.Material == material
+
+
+def test_apply_update_refreshes_material_in_place(store):
+    file = _file_with_body_context()
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+    entry = next(e for e in payload["materials"] if e["layer_id"] == A1)
+    material = _material_at(file, A1)
+    entity_id = material.id()
+    foreign = ifcopenshell.api.run("pset.add_pset", file, product=material, name="Pset_MaterialCommon")
+    ifcopenshell.api.run("pset.edit_pset", file, pset=foreign, properties={"Reference": "keep"})
+
+    entry["mode"] = "update"
+    entry["identity"]["fingerprint"] = "new-fp"
+    entry["name"] = "Isolant A v2"
+    entry["description"] = "desc v2"
+    entry["category"] = "Category v2"
+    entry["update"] = {A1: A1}
+    entry["psets"]["materialsdb.org_layer"]["thick"] = 0.25
+    entry["layer"]["thick_m"] = 0.25
+
+    assert apply_add_materials(file, payload) == 0
+
+    assert material.id() == entity_id  # in place: entity kept
+    assert material.Name == "Isolant A v2"
+    assert material.Description == "desc v2"
+    assert material.Category == "Category v2"
+    assert _fingerprint_of(material) == "new-fp"
+    psets = ifcopenshell.util.element.get_psets(material)
+    assert psets["Pset_MaterialCommon"]["Reference"] == "keep"  # foreign pset untouched
+    assert psets["materialsdb.org_layer"]["thick"] == pytest.approx(0.25)
+    layer = next(layer for layer in file.by_type("IfcMaterialLayer") if layer.Material == material)
+    assert layer.LayerThickness == pytest.approx(0.25)
+    assert layer.Name == "Isolant A v2 | 250mm"
+
+
+def test_apply_update_records_missing_model_layer(store):
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_materials(file, _payload(store))
+    material = _material_at(file, A1)
+    layers_by_id = insert._model_layers(file, MATERIAL_ID)
+    summary = {"update_missing": [], "changed_skipped": []}
+    entry = {
+        "layer_id": A1,
+        "identity": {"material_id": MATERIAL_ID, "fingerprint": "new"},
+        "update": {"no-such-layer": A1},
+        "psets": {},
+    }
+
+    insert._apply_update(file, entry, material, layers_by_id, summary)
+
+    assert summary["update_missing"] == ["no-such-layer"]
+    assert _fingerprint_of(material) != "new"  # untouched
+
+
+def test_apply_skip_leaves_changed_material_untouched(store):
+    file = ifcopenshell.file(schema="IFC4")
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+    entry = next(e for e in payload["materials"] if e["layer_id"] == A1)
+    material = _material_at(file, A1)
+    original_name = material.Name
+    original_fingerprint = _fingerprint_of(material)
+
+    entry["identity"]["fingerprint"] = "new-fp"
+    entry["name"] = "Changed"
+    # mode stays at the "skip" default
+
+    assert apply_add_materials(file, payload) == 0
+
+    assert material.Name == original_name
+    assert _fingerprint_of(material) == original_fingerprint
+
+
+def test_apply_backfills_legacy_fingerprint(store):
+    file = ifcopenshell.file(schema="IFC4")
+    payload = _payload(store)
+    for entry in payload["materials"]:
+        entry["identity"].pop("fingerprint", None)
+        entry["identity"].pop("fingerprint_scheme", None)
+    apply_add_materials(file, payload)
+    assert _fingerprint_of(_material_at(file, A1)) is None
+
+    for entry in payload["materials"]:
+        entry["identity"]["fingerprint"] = "baseline"
+
+    assert apply_add_materials(file, payload) == 0
+
+    assert _fingerprint_of(_material_at(file, A1)) == "baseline"
+    assert _fingerprint_of(_material_at(file, A2)) == "baseline"
+
+
 CONSTRUCTION_PAYLOAD = {
     "action": "add_construction",
     "construction": {
@@ -442,6 +559,8 @@ def test_construction_creates_type_and_layers():
         "sets_updated": 0,
         "materials_created": 2,
         "placeholders_matched": 0,
+        "update_missing": [],
+        "changed_skipped": [],
         "psets_written": 0,
     }
     types = file.by_type("IfcWallType")
@@ -639,6 +758,8 @@ def test_construction_resend_updates_same_set():
         "sets_updated": 1,
         "materials_created": 0,
         "placeholders_matched": 0,
+        "update_missing": [],
+        "changed_skipped": [],
         "psets_written": 0,
     }
     assert len(file.by_type("IfcWallType")) == 1  # no duplicate type
@@ -673,6 +794,101 @@ def test_construction_reuses_preset_materials(store):
     assert summary["materials_created"] == 1  # Isolant A reused via identity pset; Beton B created
     materials = file.by_type("IfcMaterial")
     assert len(materials) == 3  # 2 from apply_add_materials (Isolant A x2 layers) + Beton B
+
+
+def _one_layer_construction(fingerprint=None, mode="skip", update=None, name="Isolant A", thick=0.2):
+    identity = {
+        "material_id": MATERIAL_ID,
+        "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
+        "company": "Mini SA",
+    }
+    if fingerprint is not None:
+        identity["fingerprint"] = fingerprint
+        identity["fingerprint_scheme"] = "materialsdb-fp/1"
+    return {
+        "action": "add_construction",
+        "construction": {
+            "name": "Wall",
+            "design_usage": "consDesignForWall",
+            "types": ["IfcWallType"],
+            "layers": [
+                {
+                    "material_id": MATERIAL_ID,
+                    "thickness_m": thick,
+                    "material": {
+                        "source_id": MATERIAL_ID,
+                        "name": name,
+                        "description": "desc",
+                        "category": "Insulation",
+                        "identity": identity,
+                        "mode": mode,
+                        "update": update,
+                        "psets": {"materialsdb.org_layer": {"layer_id": A1, "thick": thick}},
+                    },
+                }
+            ],
+        },
+    }
+
+
+def test_construction_update_missing_model_layer():
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_construction(file, _one_layer_construction("old"))
+    material = _material_at(file, A1)
+    entity_id = material.id()
+
+    summary = apply_add_construction(file, _one_layer_construction("new", mode="update", update={"no-such-layer": A1}))
+
+    assert summary["update_missing"] == ["no-such-layer"]
+    assert summary["changed_skipped"] == []
+    assert material.id() == entity_id
+    assert _fingerprint_of(material) == "old"  # no layer mapped -> untouched
+
+
+def test_construction_update_refreshes_material_in_place():
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_construction(file, _one_layer_construction("old"))
+    material = _material_at(file, A1)
+    entity_id = material.id()
+    foreign = ifcopenshell.api.run("pset.add_pset", file, product=material, name="Pset_MaterialCommon")
+    ifcopenshell.api.run("pset.edit_pset", file, pset=foreign, properties={"Reference": "keep"})
+
+    summary = apply_add_construction(
+        file, _one_layer_construction("new", mode="update", update={A1: A1}, name="Isolant A v2")
+    )
+
+    assert summary["update_missing"] == []
+    assert summary["changed_skipped"] == []
+    assert material.id() == entity_id
+    assert material.Name == "Isolant A v2"
+    assert _fingerprint_of(material) == "new"
+    assert ifcopenshell.util.element.get_psets(material)["Pset_MaterialCommon"]["Reference"] == "keep"
+
+
+def test_construction_skip_changed_material_reports():
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_construction(file, _one_layer_construction("old"))
+    material = _material_at(file, A1)
+
+    summary = apply_add_construction(file, _one_layer_construction("new", name="Changed"))
+
+    assert summary["changed_skipped"] == [MATERIAL_ID]
+    assert summary["update_missing"] == []
+    assert material.Name == "Isolant A"  # left untouched
+    assert _fingerprint_of(material) == "old"
+
+
+def test_construction_backfills_legacy_fingerprint():
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_construction(file, _one_layer_construction())  # no fingerprint written
+    material = _material_at(file, A1)
+    assert _fingerprint_of(material) is None
+
+    summary = apply_add_construction(file, _one_layer_construction("baseline"))
+
+    assert summary["changed_skipped"] == []
+    assert summary["update_missing"] == []
+    assert _fingerprint_of(material) == "baseline"
 
 
 def test_construction_keeps_non_material_associations():
