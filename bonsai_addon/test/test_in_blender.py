@@ -3,16 +3,19 @@
 Run: pytest bonsai_addon/test/test_in_blender.py -q  (pytest-blender active)
 Local-only: CI runners have no Blender/Bonsai."""
 
+import hashlib
 import http.client
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
 
 import ifcopenshell.api
 import ifcopenshell.util.element
+import pytest
 from bonsai import tool
 
 import bonsai_addon
@@ -110,6 +113,32 @@ def _wait_for_gui_info(cache_dir, timeout=15.0):
     raise RuntimeError(f"gui.json never appeared at {path}")
 
 
+_SEED_CODE = (
+    "import sys; from materialsdb import query; s = query.get_store(); s.refresh(paths=sys.argv[1:]); s.close()"
+)
+
+
+def _seed_store(cache_dir, python3, env):
+    """Index ONLY the fixture producer into the shared store, synchronously and
+    offline. The server opens the same materials.db, so its first request sees
+    the materials. (The previous flow POSTed /api/refresh and never awaited the
+    async worker: the network download of every producer raced each push, so
+    pushes arrived at an unseeded store.)"""
+    producers = cache_dir / "materialsdb" / "Producers"
+    producers.mkdir(parents=True, exist_ok=True)
+    fixture = producers / "mini_producer.xml"
+    shutil.copy(FIXTURES / "mini_producer.xml", fixture)
+    seeded = subprocess.run(
+        [python3, "-c", _SEED_CODE, str(fixture)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert seeded.returncode == 0, seeded.stderr
+
+
 def _seeded_server(tmp_path):
     cache_dir = tmp_path / "cache"
     old_cache_env = os.environ.get("XDG_CACHE_HOME")
@@ -117,6 +146,7 @@ def _seeded_server(tmp_path):
     python3 = shutil.which("python3")
     assert python3, "system python3 with lxml required to host the server subprocess"
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
+    _seed_store(cache_dir, python3, env)
     server = subprocess.Popen(
         [python3, "-m", "materialsdb.gui", "--no-browser", "--port", "0"],
         env=env,
@@ -124,11 +154,6 @@ def _seeded_server(tmp_path):
         stderr=subprocess.DEVNULL,
     )
     info = _wait_for_gui_info(cache_dir)
-    producers = cache_dir / "materialsdb" / "Producers"
-    producers.mkdir(parents=True, exist_ok=True)
-    shutil.copy(FIXTURES / "mini_producer.xml", producers / "mini_producer.xml")
-    status, _ = _request(info["port"], info["token"], "POST", "/api/refresh", {})
-    assert status == 200
     return server, cache_dir, info, old_cache_env
 
 
@@ -370,6 +395,12 @@ def test_construction_roundtrip_from_model(tmp_path):
         ifcopenshell.api.run(
             "pset.edit_pset", file, pset=identity, properties={"material_id": "00000000-0000-0000-0000-000000000001"}
         )
+        # reuse keys on (material_id, org_layer.layer_id): this is the already
+        # pushed material for the store's a1 layer (thickness 0.2 m)
+        org_layer = ifcopenshell.api.run("pset.add_pset", file, product=resolvable, name="materialsdb.org_layer")
+        ifcopenshell.api.run(
+            "pset.edit_pset", file, pset=org_layer, properties={"layer_id": "00000000-0000-0000-0000-0000000000a1"}
+        )
         foreign = ifcopenshell.api.run("material.add_material", file, name="Brique terrecuite")
         thermal = ifcopenshell.api.run("pset.add_pset", file, product=foreign, name="Pset_MaterialThermal")
         ifcopenshell.api.run("pset.edit_pset", file, pset=thermal, properties={"ThermalConductivity": 0.21})
@@ -427,3 +458,119 @@ def test_construction_roundtrip_from_model(tmp_path):
     finally:
         if server is not None:
             _stop_server(server, old_cache_env)
+
+
+MATERIAL_ID = "00000000-0000-0000-0000-000000000001"
+LAYER_A1 = "00000000-0000-0000-0000-0000000000a1"
+
+
+def _material_on_layer(file, layer_id):
+    """The IfcMaterial whose identity maps it to `layer_id`."""
+    for material in file.by_type("IfcMaterial"):
+        org_layer = ifcopenshell.util.element.get_psets(material).get("materialsdb.org_layer") or {}
+        if org_layer.get("layer_id") == layer_id:
+            return material
+    raise AssertionError(f"no IfcMaterial for layer {layer_id}")
+
+
+def _mutate_stored_material(cache_dir, material_id, replacements):
+    """Byte-replace the material's XML blob in the server's store and return the
+    new fingerprint (sha256 of the blob, matching store.material_fingerprint).
+    This models the producer revising a material upstream."""
+    connection = sqlite3.connect(cache_dir / "materialsdb" / "materials.db")
+    try:
+        row = connection.execute("SELECT xml FROM materials WHERE id=?", (material_id,)).fetchone()
+        assert row is not None, f"{material_id} missing from the seeded store"
+        xml = bytes(row[0])
+        for old, new in replacements:
+            xml = xml.replace(old, new)
+        connection.execute("UPDATE materials SET xml=? WHERE id=?", (sqlite3.Binary(xml), material_id))
+        connection.commit()
+    finally:
+        connection.close()
+    return hashlib.sha256(xml).hexdigest()
+
+
+def _stored_model_fingerprint(cache_dir, material_id):
+    connection = sqlite3.connect(cache_dir / "materialsdb" / "materials.db")
+    try:
+        row = connection.execute(
+            "SELECT fingerprint FROM model_materials WHERE material_id=?", (material_id,)
+        ).fetchone()
+    finally:
+        connection.close()
+    return row[0] if row else None
+
+
+def test_material_update_preserves_guid_and_resends_model_map(tmp_path):
+    """A producer revision + an opted-in ``mode="update"`` push refreshes the
+    SAME IfcMaterial in place (its entity kept — IfcMaterial has no GlobalId, so
+    the STEP id is its identity — and the resolved pset value updated) and
+    reports the model map back to the GUI afterwards."""
+    server, cache_dir, info, old_cache_env = _seeded_server(tmp_path)
+    try:
+        port, token = info["port"], info["token"]
+        client = ListenerClient()
+        client.register(bonsai_addon._model_path())
+
+        def push(item):
+            status, body = _request(
+                port,
+                token,
+                "POST",
+                "/api/listener/send",
+                {"client_id": client.client_id, "action": "add_materials", "items": [item]},
+            )
+            assert status == 200, body
+            return body
+
+        def drain():
+            previous = bonsai_addon._CLIENT
+            bonsai_addon._CLIENT = client
+            try:
+                assert bonsai_addon._poll_timer() == 1.0
+            finally:
+                bonsai_addon._CLIENT = previous
+
+        push({"id": MATERIAL_ID})
+        drain()
+
+        file = tool.Ifc.get()
+        assert file is not None
+        material = _material_on_layer(file, LAYER_A1)
+        entity_id = material.id()  # IfcMaterial is not rooted: its STEP id is its identity
+        thermal = ifcopenshell.util.element.get_pset(material, name="Pset_MaterialThermal")
+        assert thermal["ThermalConductivity"] == pytest.approx(0.036)
+
+        # the seeded store's XML changes (λ 0.036 -> 0.06), so its fingerprint does
+        fingerprint = _mutate_stored_material(
+            cache_dir, MATERIAL_ID, [(b'lambda_value="0.036"', b'lambda_value="0.06"')]
+        )
+
+        # re-push just that layer, opted into the in-place update mapping
+        push({"id": MATERIAL_ID, "layer_ids": [LAYER_A1], "mode": "update", "update": {LAYER_A1: LAYER_A1}})
+
+        sent = []
+        original_send_model_map = client.send_model_map
+
+        def spy(model_path, materials):
+            sent.append((model_path, materials))
+            return original_send_model_map(model_path, materials)
+
+        client.send_model_map = spy
+        drain()
+
+        # refreshed in place: same entity, no duplicate material
+        assert _material_on_layer(file, LAYER_A1).id() == entity_id
+        assert len(file.by_type("IfcMaterial")) == 2
+        thermal = ifcopenshell.util.element.get_pset(_material_on_layer(file, LAYER_A1), name="Pset_MaterialThermal")
+        assert thermal["ThermalConductivity"] == pytest.approx(0.06)
+
+        # the push reported the model map back to the GUI, with the new fingerprint
+        assert len(sent) == 1, sent
+        model_path, materials = sent[0]
+        assert model_path == bonsai_addon._model_path()
+        assert materials[MATERIAL_ID]["fingerprint"] == fingerprint
+        assert _stored_model_fingerprint(cache_dir, MATERIAL_ID) == fingerprint
+    finally:
+        _stop_server(server, old_cache_env)
