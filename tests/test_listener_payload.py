@@ -218,7 +218,29 @@ def test_construction_warning_uses_payload_lang(store):
     assert problems == []
     material = payload["construction"]["layers"][0]["material"]
     assert material["name"] == "Daemmstoff A"
-    assert payload["construction"]["warnings"] == ["Daemmstoff A: design thickness 0.15 m matches no layer"]
+    assert payload["construction"]["warnings"] == ["Daemmstoff A: design thickness 150 mm matches no layer"]
+
+
+def test_construction_resolves_noisy_design_thickness(store):
+    """IFC lengths carry float noise (a 200 mm layer reads as 0.20000000298 in
+    metres); the shared micrometre tolerance must still match the store layer."""
+    payload, problems = build_add_construction_payload(
+        store,
+        body={
+            "name": "w",
+            "layers": [
+                {
+                    "material_id": "00000000-0000-0000-0000-000000000001",
+                    "thickness_m": 0.200000002980232,
+                }
+            ],
+        },
+    )
+
+    assert problems == []
+    assert payload["construction"]["warnings"] == []
+    org = payload["construction"]["layers"][0]["material"]["psets"]["materialsdb.org_layer"]
+    assert org["layer_id"] == "00000000-0000-0000-0000-0000000000a1"  # the 200 mm layer
 
 
 def test_construction_zero_layer_material_warns_and_has_no_psets(store):
@@ -433,6 +455,10 @@ def test_construction_decision_fields_match_layer_not_index(store):
     assert _raw_decision_layer(raw_layers, "nope", 0.15) == {}
     duplicate = [dict(raw_layers[1]), dict(raw_layers[1])]
     assert _raw_decision_layer(duplicate, "00000000-0000-0000-0000-000000000002", 0.15) == {}
+
+    # IFC float noise on the validated thickness still finds its raw layer
+    noisy = [{"material_id": "X", "thickness_m": 0.2, "mode": "update"}]
+    assert _raw_decision_layer(noisy, "X", 0.200000002980232)["mode"] == "update"
 
 
 def test_construction_payload_uses_own_decision_per_layer(store):

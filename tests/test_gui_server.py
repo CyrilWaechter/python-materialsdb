@@ -1071,10 +1071,10 @@ def test_listener_send_add_construction_surfaces_warnings(api):
     )
 
     assert status == 200
-    assert body["warnings"] == ["Isolant A: design thickness 0.15 m matches no layer"]
+    assert body["warnings"] == ["Isolant A: design thickness 150 mm matches no layer"]
 
     status, body = request(server, "GET", "/api/listener/poll?client_id=c1", token=state.token)
-    assert body["payload"]["construction"]["warnings"] == ["Isolant A: design thickness 0.15 m matches no layer"]
+    assert body["payload"]["construction"]["warnings"] == ["Isolant A: design thickness 150 mm matches no layer"]
 
 
 def test_listener_send_add_materials_has_empty_warnings(api):
@@ -1259,6 +1259,11 @@ def test_match_layers_id_and_thickness(api):
     result = _match_layers(store_, M1, [{"entity_id": "42", "layer_id": None, "thick": 0.2}])
     assert result["state"] == "updatable"
     assert result["mapping"] == {"42": L1A}
+
+    # IFC float noise still matches the clean millimetre store layer
+    result = _match_layers(store_, M1, [{"layer_id": "model-n", "thick": 0.200000002980232}])
+    assert result["state"] == "updatable"
+    assert result["mapping"] == {"model-n": L1A}
 
 
 def test_match_layers_ambiguous(tmp_path):

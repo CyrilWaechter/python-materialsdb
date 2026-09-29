@@ -1,4 +1,7 @@
 const TOKEN = window.MATERIALSDB_TOKEN;
+// thickness comparisons use a micrometre tolerance: IFC lengths carry ~1e-9
+// float noise, so a 200 mm design layer never equals a clean 0.2 in metres
+const THICKNESS_EPS_M = 1e-6;
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
@@ -47,7 +50,7 @@ function thicknessCellHtml(layer, index) {
              value="${mm}" style="width:4.5rem" title="thickness in mm">`;
   }
   const warned = choices.length > 0 && !layer.anyThickness &&
-                 !choices.some((c) => Math.abs(c - mm) < 1e-6);
+                !choices.some((c) => Math.abs(c - mm) < THICKNESS_EPS_M);
   return `${control} mm` +
     (warned ? ` <span class="warn" title="the manufacturer does not offer this thickness">\u26a0</span>` : "");
 }
@@ -508,7 +511,7 @@ async function addLayerFromChooser(picked) {
         continue;
       }
     } else {
-      if (layers.some((l) => l.material_id === it.material_id && Math.abs(l.thickness_m - thicknessHint) < 1e-9)) continue;
+      if (layers.some((l) => l.material_id === it.material_id && Math.abs(l.thickness_m - thicknessHint) < THICKNESS_EPS_M)) continue;
     }
     const layer = { material_id: it.material_id, thickness_m: thicknessHint != null ? thicknessHint : 0.2 };
     layers.push(layer);

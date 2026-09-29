@@ -12,6 +12,11 @@ from materialsdb.classes import (
     Webinfo,
 )
 
+# Tolerance for thickness comparisons, in metres. IFC serialises lengths with
+# ~1e-9 relative noise (a 200 mm design layer reads as 0.20000000298...), so
+# exact equality never matches store values expressed as clean millimetres.
+THICKNESS_EPS_M = 1e-6
+
 
 def date_from_xml(days: float) -> datetime.datetime:
     """Convert days since 30.12.1899 which is materialsdb xml convention to datetime"""

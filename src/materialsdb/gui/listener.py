@@ -112,12 +112,12 @@ def _resolve_construction_layer(material, design_thickness_m, country, lang) -> 
         return None, f"{name}: material has no layer"
     for layer in layers:
         thick_m = _layer_thick_m(layer, country)
-        if thick_m is not None and abs(thick_m - design_thickness_m) <= 1e-9:
+        if thick_m is not None and abs(thick_m - design_thickness_m) <= utils.THICKNESS_EPS_M:
             return layer, None
     if len(layers) == 1:
         return layers[0], None
     name = str(utils.get_material_name(material, lang))
-    return layers[0], f"{name}: design thickness {design_thickness_m} m matches no layer"
+    return layers[0], f"{name}: design thickness {round(design_thickness_m * 1000)} mm matches no layer"
 
 
 def _raw_decision_layer(raw_layers, material_id, thickness_m) -> dict:
@@ -138,7 +138,7 @@ def _raw_decision_layer(raw_layers, material_id, thickness_m) -> dict:
             raw_thickness = float(raw.get("thickness_m"))
         except (TypeError, ValueError):
             continue
-        if abs(raw_thickness - thickness_m) <= 1e-9:
+        if abs(raw_thickness - thickness_m) <= utils.THICKNESS_EPS_M:
             matches.append(raw)
     return matches[0] if len(matches) == 1 else {}
 

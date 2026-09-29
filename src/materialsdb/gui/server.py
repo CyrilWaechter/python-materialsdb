@@ -25,13 +25,8 @@ _CHANGED = "changed"
 _UNKNOWN = "unknown"
 _GONE = "gone"
 
-# thickness values are metres; producer geometry is resolved per country and
-# can round-trip through JSON, so compare with a tight tolerance
-# metres; IFC floats carry ~1e-9 noise on values written as millimetres, so a
-# micrometre-scale tolerance is needed to match a 120 mm design layer to the
-# store's 0.12 m variant.
-_THICK_EPS = 1e-6
-
+# producer geometry is resolved per country and can round-trip through JSON;
+# thickness comparisons use the shared micrometre tolerance (utils)
 _SCALAR_REPORT_FIELDS = ("name", "description", "category", "color", "style_name")
 
 
@@ -109,7 +104,7 @@ def _layer_candidates(model_layer, new_layers) -> list[str]:
         matches = [
             new_layer["layer_id"]
             for new_layer in new_layers
-            if new_layer["thick"] is not None and abs(new_layer["thick"] - thick) <= _THICK_EPS
+            if new_layer["thick"] is not None and abs(new_layer["thick"] - thick) <= utils.THICKNESS_EPS_M
         ]
     if matches:
         return matches
