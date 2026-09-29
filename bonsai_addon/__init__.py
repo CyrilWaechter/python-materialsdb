@@ -77,11 +77,16 @@ def _model_path():
 
 
 def _safety_net(report, summary):
-    """Append the not-opted-in safety net: a push never silently drops a changed
-    material, so tell the user how many were left untouched."""
-    skipped = (summary or {}).get("changed_skipped") or []
+    """Append the push safety net: how many changed materials were not opted in
+    (left untouched) and how many replacements failed, so a push never silently
+    drops work."""
+    summary = summary or {}
+    skipped = summary.get("changed_skipped") or []
     if skipped:
         report += f"; {len(skipped)} changed material(s) left unchanged"
+    failed = summary.get("replace_failed") or []
+    if failed:
+        report += f"; {len(failed)} replacement(s) failed"
     return report
 
 

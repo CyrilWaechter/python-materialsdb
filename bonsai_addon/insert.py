@@ -199,13 +199,29 @@ def _apply_update(file, entry, material, layers_by_id, summary) -> bool:
     return refreshed
 
 
-def _remove_layer(file, layer) -> None:
+def _retarget_associations(file, old_set, replacement_material, replacement_set=None) -> None:
+    """Keep IfcRelAssociatesMaterial valid when the layer set it relates to is
+    removed: RelatingMaterial is mandatory, so deleting the set would null it and
+    corrupt the file. Point the relation at the replacement layer set when one
+    exists, else at the replacement IfcMaterial."""
+    target = replacement_set if replacement_set is not None else replacement_material
+    for relation in file.by_type("IfcRelAssociatesMaterial"):
+        relating = relation.RelatingMaterial
+        if relating is not None and relating.id() == old_set.id():
+            relation.RelatingMaterial = target
+
+
+def _remove_layer(file, layer, replacement_material=None, replacement_set=None) -> None:
     """Remove an IfcMaterialLayer, dropping its layer set when it becomes empty
-    (an IfcMaterialLayerSet with no members is schema-invalid)."""
+    (an IfcMaterialLayerSet with no members is schema-invalid). Any
+    IfcRelAssociatesMaterial relating to a dropped set is retargeted (see
+    `_retarget_associations`) rather than left dangling."""
     layer_sets = list(getattr(layer, "ToMaterialLayerSet", None) or ())
     file.remove(layer)
     for parent in layer_sets:
         if not parent.MaterialLayers:
+            if replacement_material is not None:
+                _retarget_associations(file, parent, replacement_material, replacement_set)
             file.remove(parent)
 
 
@@ -235,7 +251,7 @@ def _purge_material(file, material, keep_layers=False) -> None:
     orphans = {item.id() for item in file.by_type("IfcStyledItem") if item.Item is None and not item.StyledByItem}
     for representation in list(file.by_type("IfcStyledRepresentation")):
         items = representation.Items or ()
-        if items and all(item.id() in orphans for item in items):
+        if not items or all(item.id() in orphans for item in items):
             file.remove(representation)
     for item in list(file.by_type("IfcStyledItem")):
         if item.id() in orphans:
@@ -275,6 +291,12 @@ def _retarget_layer(entry, layer, material) -> None:
     layer.Description = str(_entry_layer_id(entry) or "")
 
 
+def _replace_failure(material_id, layer_id) -> dict:
+    """Structured record for a replacement that could not be applied, keeping
+    both the superseded material and (when given) its model layer."""
+    return {"material_id": material_id, "layer_id": layer_id}
+
+
 def _apply_replace(file, entry, summary) -> None:
     """Replace the superseded model material/layer named by `entry["replaces"]`.
 
@@ -282,22 +304,26 @@ def _apply_replace(file, entry, summary) -> None:
     IfcMaterial. Whole-material (no `layer_id`) handles every model layer of the
     material: one IfcMaterialLayer is reused when the replacement entry carries
     a layer and the extras are removed. The superseded IfcMaterials and their
-    psets/style/org_layer are removed. A target that is no longer present (or a
-    failure while applying) is recorded in `summary["replace_failed"]` instead
-    of raising."""
+    psets/style/org_layer are removed; an IfcRelAssociatesMaterial caught by a
+    dropped layer set is retargeted to the replacement (mandatory RelatingMaterial).
+    A malformed `replaces`, a target that is no longer present, or a failure
+    while applying is recorded in `summary["replace_failed"]` instead of
+    raising."""
     failed = summary.setdefault("replace_failed", [])
-    replaces = entry.get("replaces") or {}
-    material_id = replaces.get("material_id")
-    layer_id = replaces.get("layer_id")
-    targets = _model_layers(file, material_id)
-    if layer_id is not None:
-        pairs = list(targets.get(layer_id) or [])
-    else:
-        pairs = [pair for group in targets.values() for pair in group]
-    if not pairs:
-        failed.append(material_id)
-        return
+    material_id = None
+    layer_id = None
     try:
+        replaces = entry.get("replaces") or {}
+        material_id = replaces.get("material_id")
+        layer_id = replaces.get("layer_id")
+        targets = _model_layers(file, material_id)
+        if layer_id is not None:
+            pairs = list(targets.get(layer_id) or [])
+        else:
+            pairs = [pair for group in targets.values() for pair in group]
+        if not pairs:
+            failed.append(_replace_failure(material_id, layer_id))
+            return
         material = _build_replacement_material(file, entry)
         if layer_id is not None:
             model_material, model_layer = pairs[0]
@@ -306,19 +332,23 @@ def _apply_replace(file, entry, summary) -> None:
             _purge_material(file, model_material, keep_layers=True)
             return
         keep = next((pair for pair in pairs if pair[1] is not None), None) if entry.get("layer") else None
+        replacement_set = None
+        if keep is not None:
+            layer_sets = list(getattr(keep[1], "ToMaterialLayerSet", None) or ())
+            replacement_set = layer_sets[0] if layer_sets else None
         keep_ids = (keep[0].id(), keep[1].id()) if keep is not None else None
         for model_material, model_layer in pairs:
             if model_layer is None:
                 continue
             if (model_material.id(), model_layer.id()) == keep_ids:
                 continue
-            _remove_layer(file, model_layer)
+            _remove_layer(file, model_layer, material, replacement_set)
         if keep is not None:
             _retarget_layer(entry, keep[1], material)
         for model_material, _model_layer in pairs:
             _purge_material(file, model_material, keep_layers=True)
     except Exception:  # noqa: BLE001 - a failed replacement must not abort the push
-        failed.append(material_id)
+        failed.append(_replace_failure(material_id, layer_id))
 
 
 def _add_identity_pset(file, material, identity):

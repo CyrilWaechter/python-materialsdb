@@ -649,15 +649,53 @@ def test_apply_replace_whole_material_collapses_to_single_layer(store):
 
 def test_apply_replace_records_missing_target():
     """A replace whose superseded material/layer is not in the model must be
-    recorded and must not create a stray replacement."""
+    recorded (material and layer) and must not create a stray replacement."""
     file = ifcopenshell.file(schema="IFC4")
     entry = _replace_entry(with_layer=False, replaces_layer=None)
 
     summary = {}
     assert apply_add_materials(file, {"materials": [entry]}, summary) == 0
 
-    assert summary["replace_failed"] == [MATERIAL_ID]
+    assert summary["replace_failed"] == [{"material_id": MATERIAL_ID, "layer_id": None}]
     assert len(file.by_type("IfcMaterial")) == 0
+
+
+def test_apply_replace_records_malformed_replaces():
+    """A `replaces` mapping that is not a mapping must be recorded, not raised."""
+    file = ifcopenshell.file(schema="IFC4")
+    entry = _replace_entry(with_layer=False, replaces_layer=None)
+    entry["replaces"] = "not-a-mapping"
+
+    summary = {}
+    assert apply_add_materials(file, {"materials": [entry]}, summary) == 0
+
+    assert summary["replace_failed"] == [{"material_id": None, "layer_id": None}]
+    assert len(file.by_type("IfcMaterial")) == 0
+
+
+def test_apply_replace_retargets_association_when_set_removed(store):
+    """Whole-material layer-less replace deletes the material's layer set. When
+    that set is the RelatingMaterial of an IfcRelAssociatesMaterial (a
+    construction-pushed type), the relation must be retargeted to the
+    replacement IfcMaterial instead of left with a NULL mandatory attribute."""
+    file = _file_with_body_context()
+    apply_add_materials(file, _payload(store))
+    old_material = _material_at(file, A1)
+    old_set = insert._layer_of(file, old_material).ToMaterialLayerSet[0]
+    wall_type = ifcopenshell.api.run("root.create_entity", file, ifc_class="IfcWallType", name="W")
+    ifcopenshell.api.run(
+        "material.assign_material", file, products=[wall_type], type="IfcMaterialLayerSet", material=old_set
+    )
+
+    summary = {}
+    apply_add_materials(file, {"materials": [_replace_entry(with_layer=False, replaces_layer=None)]}, summary)
+
+    assert summary["replace_failed"] == []
+    replacement = _material_at(file, NEW_LID)
+    relation = next(a for a in wall_type.HasAssociations if a.is_a("IfcRelAssociatesMaterial"))
+    assert relation.RelatingMaterial is not None
+    assert relation.RelatingMaterial == replacement
+    assert relation.RelatingMaterial.is_a("IfcMaterial")
 
 
 CONSTRUCTION_PAYLOAD = {
