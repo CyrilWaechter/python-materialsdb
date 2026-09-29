@@ -12,10 +12,24 @@ from urllib.parse import parse_qs, unquote, urlparse
 from materialsdb import config, utils
 from materialsdb.construction import finite_or_none
 from materialsdb.ifc.material_builder import add_material
+from materialsdb.store import FINGERPRINT_SCHEME
 
 STATIC_DIR = Path(__file__).with_name("static")
 
 _LISTENER_STALE_S = 5.0
+
+# model statuses
+_ABSENT = "absent"
+_CURRENT = "current"
+_CHANGED = "changed"
+_UNKNOWN = "unknown"
+_GONE = "gone"
+
+# thickness values are metres; producer geometry is resolved per country and
+# can round-trip through JSON, so compare with a tight tolerance
+_THICK_EPS = 1e-9
+
+_SCALAR_REPORT_FIELDS = ("name", "description", "category", "color", "style_name")
 
 
 def _float(value):
@@ -27,6 +41,147 @@ def _float(value):
 
 def _resolve_display_name(names, lang):
     return str(names.get(lang) or names.get("") or "")
+
+
+def _active_model_path(state) -> str | None:
+    """The ``model_path`` of the listener seen most recently (non-empty)."""
+    listeners = [listener for listener in state.listeners.values() if listener.get("model_path")]
+    if not listeners:
+        return None
+    return max(listeners, key=lambda listener: listener.get("last_seen") or 0.0)["model_path"]
+
+
+def _status_from_entry(store_, entry, material_id) -> str:
+    """Derive a material's model status from its cached model-map entry."""
+    if entry is None:
+        return _ABSENT
+    digest = store_.material_fingerprint(material_id)
+    if digest is None:
+        return _GONE
+    # A model entry without a per-layer map (no org_layer) is a legacy
+    # baseline: there is nothing to match or report, so it is never `changed`.
+    if not entry.get("layers"):
+        return _UNKNOWN
+    fingerprint = entry.get("fingerprint")
+    if not fingerprint or entry.get("scheme") != FINGERPRINT_SCHEME:
+        return _UNKNOWN
+    if fingerprint != digest:
+        return _CHANGED
+    return _CURRENT
+
+
+def _material_status(store_, model_path, material_id) -> str:
+    """Status of ``material_id`` in the model cached under ``model_path``."""
+    if not model_path:
+        return _ABSENT
+    entry = store_.get_model_materials(model_path).get(material_id)
+    return _status_from_entry(store_, entry, material_id)
+
+
+def _new_layers(store_, material_id) -> list[dict]:
+    """The current store layers of ``material_id`` as {layer_id, thick} (metres)."""
+    from materialsdb.gui.listener import build_add_materials_payload
+
+    payload, _missing = build_add_materials_payload(store_, [{"id": material_id}])
+    layers = []
+    for entry in payload["materials"]:
+        org_layer = (entry.get("psets") or {}).get("materialsdb.org_layer") or {}
+        thick = org_layer.get("thick")
+        if thick is None:
+            thick = (entry.get("layer") or {}).get("thick_m")
+        layers.append({"layer_id": str(entry.get("layer_id") or ""), "thick": thick})
+    return layers
+
+
+def _layer_candidates(model_layer, new_layers) -> list[str]:
+    """New layer ids a single model layer can be updated to."""
+    model_layer_id = str(model_layer.get("layer_id") or "")
+    for new_layer in new_layers:
+        if new_layer["layer_id"] == model_layer_id:
+            return [new_layer["layer_id"]]
+    thick = model_layer.get("thick")
+    if not thick:
+        # no usable thickness: only an unambiguous single new layer can match
+        return [new_layers[0]["layer_id"]] if len(new_layers) == 1 else []
+    return [
+        new_layer["layer_id"]
+        for new_layer in new_layers
+        if new_layer["thick"] is not None and abs(new_layer["thick"] - thick) <= _THICK_EPS
+    ]
+
+
+def _match_layers(store_, material_id, model_layers) -> dict:
+    """Match the model's layers onto the current store version.
+
+    Returns ``{state, mapping, candidates}`` where state is one of
+    ``updatable`` / ``ambiguous`` / ``unmatched`` / ``unknown``."""
+    summary = store_.get_summary(material_id)
+    if summary is None:
+        return {"state": _UNKNOWN, "mapping": {}, "candidates": {}}
+    if summary.type != "simple":
+        # btk/complex materials cannot be updated in place layer by layer
+        return {"state": "unmatched", "mapping": {}, "candidates": {}}
+    if not model_layers:
+        return {"state": _UNKNOWN, "mapping": {}, "candidates": {}}
+    new_layers = _new_layers(store_, material_id)
+    if not new_layers:
+        return {"state": "unmatched", "mapping": {}, "candidates": {}}
+
+    mapping: dict[str, str] = {}
+    candidates: dict[str, list[str]] = {}
+    unmatched = False
+    for model_layer in model_layers:
+        model_layer_id = str(model_layer.get("layer_id") or "")
+        matches = _layer_candidates(model_layer, new_layers)
+        if len(matches) == 1:
+            mapping[model_layer_id] = matches[0]
+        elif len(matches) > 1:
+            candidates[model_layer_id] = matches
+        else:
+            unmatched = True
+    if unmatched:
+        return {"state": "unmatched", "mapping": mapping, "candidates": candidates}
+    if candidates:
+        return {"state": "ambiguous", "mapping": mapping, "candidates": candidates}
+    return {"state": "updatable", "mapping": mapping, "candidates": {}}
+
+
+def _lambda_value(entry) -> float | None:
+    thermal = (entry.get("psets") or {}).get("materialsdb.org_thermal") or {}
+    return thermal.get("lambda_value_dry")
+
+
+def _change_report(store_, model_path, material_id) -> tuple[list[dict], bool]:
+    """Old → new schedule of the fields that changed since the push snapshot.
+
+    Returns ``(report, has_snapshot)``; ``([], False)`` when nothing was pushed."""
+    from materialsdb.gui.listener import build_add_materials_payload
+
+    payload, _missing = build_add_materials_payload(store_, [{"id": material_id}])
+    report: list[dict] = []
+    has_snapshot = False
+    scalars_done: set[str] = set()
+    for entry in payload["materials"]:
+        layer_id = str(entry.get("layer_id") or "")
+        snapshot = store_.get_pushed_material(model_path, material_id, layer_id or None)
+        if snapshot is None:
+            continue
+        has_snapshot = True
+        for field in _SCALAR_REPORT_FIELDS:
+            if field in scalars_done:
+                continue
+            old, new = snapshot.get(field), entry.get(field)
+            if old != new:
+                report.append({"field": field, "old": old, "new": new})
+            scalars_done.add(field)
+        old_thick = (snapshot.get("layer") or {}).get("thick_m")
+        new_thick = (entry.get("layer") or {}).get("thick_m")
+        if old_thick != new_thick:
+            report.append({"field": "thickness", "old": old_thick, "new": new_thick})
+        old_lambda, new_lambda = _lambda_value(snapshot), _lambda_value(entry)
+        if old_lambda != new_lambda:
+            report.append({"field": "lambda", "old": old_lambda, "new": new_lambda})
+    return report, has_snapshot
 
 
 def _progress_cb(state):
@@ -108,6 +263,8 @@ class GuiState:
         self.file = None
         # client_id -> {"model_path": str, "last_seen": float, "pending": dict | None, "last_status": dict | None}
         self.listeners = {}
+        # most recent model path whose map was cached (served when offline)
+        self.last_model_path: str | None = None
         # constructions pushed from a model (newest first, capped at 20)
         self.incoming = []
         self.updates_available = False
@@ -215,8 +372,11 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             self._send(400, {"error": "client_id required"})
             return
         self._prune_listeners()
+        model_path = str(payload.get("model_path") or "")
+        if model_path:
+            self.state.last_model_path = model_path
         self.state.listeners[client_id] = {
-            "model_path": str(payload.get("model_path") or ""),
+            "model_path": model_path,
             "last_seen": time.time(),
             "pending": None,
             "last_status": None,
@@ -229,6 +389,8 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(materials, dict):
             self._send(400, {"error": "materials must be an object"})
             return
+        if model_path:
+            self.state.last_model_path = model_path
         self.state.resolve_store().set_model_materials(model_path, materials)
         self._send(200, {"ok": True})
 
@@ -317,6 +479,52 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             for cid, l in sorted(self.state.listeners.items())
         ]
         self._send(200, {"clients": clients})
+
+    def _model_changes(self, store_):
+        """Status of every cached model material, with the change report."""
+        model_path = _active_model_path(self.state) or self.state.last_model_path
+        if not model_path:
+            self._send(
+                200,
+                {
+                    "model_path": None,
+                    "seen_at": None,
+                    "counts": {"changed": 0, "gone": 0, "unknown": 0},
+                    "changed": [],
+                    "gone": [],
+                    "unknown": [],
+                },
+            )
+            return
+        model = store_.get_model_materials(model_path)
+        changed, gone, unknown = [], [], []
+        for material_id, entry in model.items():
+            status = _status_from_entry(store_, entry, material_id)
+            if status == _CHANGED:
+                report, has_snapshot = _change_report(store_, model_path, material_id)
+                changed.append(
+                    {
+                        "material_id": material_id,
+                        "matching": _match_layers(store_, material_id, entry.get("layers") or []),
+                        "report": report,
+                        "has_snapshot": has_snapshot,
+                    }
+                )
+            elif status == _GONE:
+                gone.append(material_id)
+            elif status == _UNKNOWN:
+                unknown.append(material_id)
+        self._send(
+            200,
+            {
+                "model_path": model_path,
+                "seen_at": store_.model_seen_at(model_path),
+                "counts": {"changed": len(changed), "gone": len(gone), "unknown": len(unknown)},
+                "changed": changed,
+                "gone": gone,
+                "unknown": unknown,
+            },
+        )
 
     def _composer_push(self, payload):
         name = str(payload.get("name") or "").strip()
@@ -432,10 +640,13 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 lang=params.get("lang") or None,
             )
             lang = params.get("lang") or config.get_lang()
+            model_path = _active_model_path(self.state) or self.state.last_model_path
+            model = store_.get_model_materials(model_path) if model_path else {}
             materials = []
             for row in rows:
                 item = asdict(row)
                 item["display_name"] = _resolve_display_name(item["names"], lang)
+                item["model"] = _status_from_entry(store_, model.get(item["id"]), item["id"])
                 materials.append(item)
             self._send(200, {"materials": materials})
             return
@@ -485,6 +696,9 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/updates":
             self._send(200, {"updates_available": self.state.updates_available})
+            return
+        if parsed.path == "/api/model/changes":
+            self._model_changes(store_)
             return
         if parsed.path.startswith("/api/constructions/"):
             from materialsdb import construction as cm

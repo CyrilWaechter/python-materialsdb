@@ -1061,6 +1061,292 @@ def test_listener_send_add_construction_invalid(api):
     assert "name required" in body["error"]
 
 
+# ---------------------------------------------------------------------------
+# Task 5: model status, layer matching and /api/model/changes
+# ---------------------------------------------------------------------------
+
+M1 = "00000000-0000-0000-0000-000000000001"
+M2 = "00000000-0000-0000-0000-000000000002"
+M4 = "00000000-0000-0000-0000-000000000004"
+L1A = "00000000-0000-0000-0000-0000000000a1"
+L1B = "00000000-0000-0000-0000-0000000000a2"
+L2B = "00000000-0000-0000-0000-0000000000b1"
+
+_AMBIG_ID = "00000000-0000-0000-0000-0000000000f1"
+_AMBIG_LAYER_A = "00000000-0000-0000-0000-0000000000f2"
+_AMBIG_LAYER_B = "00000000-0000-0000-0000-0000000000f3"
+
+# Two layers of identical thickness, so a thickness match is ambiguous.
+_AMBIGUOUS_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<materials company="Ambig SA" companyid="C3D85A67-5B1E-4960-A297-2DE8275049C7" ver="1" crd="43979.7189866898" verXML="3" xmlns="http://www.materialsdb.org">
+  <material id="00000000-0000-0000-0000-0000000000f1" readonly="1" type="simple">
+    <information group="Concrete">
+      <names><name lang="fr">Ambig F</name></names>
+    </information>
+    <layers>
+      <layer id="00000000-0000-0000-0000-0000000000f2">
+        <geometry country="CH" thick="100"/>
+        <thermal country="CH" lambda_value="0.1"/>
+      </layer>
+      <layer id="00000000-0000-0000-0000-0000000000f3">
+        <geometry country="CH" thick="100"/>
+        <thermal country="CH" lambda_value="0.2"/>
+      </layer>
+    </layers>
+  </material>
+</materials>
+"""
+
+
+def _ingest_model(server, state, model_path, materials, client_id="c1", register=True):
+    if register:
+        status, _ = request(
+            server,
+            "POST",
+            "/api/listener/register",
+            payload={"client_id": client_id, "model_path": model_path},
+            token=state.token,
+        )
+        assert status == 200
+    status, body = request(
+        server,
+        "POST",
+        "/api/listener/model",
+        payload={
+            "client_id": client_id,
+            "model_path": model_path,
+            "scheme": "materialsdb-fp/1",
+            "materials": materials,
+        },
+        token=state.token,
+    )
+    assert status == 200 and body == {"ok": True}
+
+
+def test_active_model_path_uses_most_recent_listener(api):
+    from materialsdb.gui.server import _active_model_path
+
+    _server, state = api
+    assert _active_model_path(state) is None
+    state.listeners["a"] = {"model_path": "/m/a.ifc", "last_seen": 10.0}
+    state.listeners["b"] = {"model_path": "/m/b.ifc", "last_seen": 20.0}
+    state.listeners["c"] = {"model_path": "", "last_seen": 30.0}
+    assert _active_model_path(state) == "/m/b.ifc"
+
+
+def test_material_status_matrix(api):
+    from materialsdb.gui.server import _material_status
+
+    _server, state = api
+    store_ = state.resolve_store()
+    path = "/m/status.ifc"
+
+    store_.set_model_materials(
+        path,
+        {
+            M1: {"fingerprint": "stale", "scheme": "materialsdb-fp/1", "layers": [{"layer_id": L1A, "thick": 0.2}]},
+            M2: {
+                "fingerprint": store_.material_fingerprint(M2),
+                "scheme": "materialsdb-fp/1",
+                "layers": [{"layer_id": L2B, "thick": 0.15}],
+            },
+            "ghost": {"fingerprint": "ffff", "scheme": "materialsdb-fp/1", "layers": [{"layer_id": "g", "thick": 0.3}]},
+        },
+    )
+    assert _material_status(store_, path, M1) == "changed"
+    assert _material_status(store_, path, M2) == "current"
+    assert _material_status(store_, path, "ghost") == "gone"
+    assert _material_status(store_, path, "missing") == "absent"
+
+    store_.set_model_materials(
+        path, {M1: {"fingerprint": None, "scheme": "materialsdb-fp/1", "layers": [{"layer_id": L1A, "thick": 0.2}]}}
+    )
+    assert _material_status(store_, path, M1) == "unknown"
+
+    store_.set_model_materials(
+        path, {M1: {"fingerprint": "x", "scheme": "materialsdb-fp/2", "layers": [{"layer_id": L1A, "thick": 0.2}]}}
+    )
+    assert _material_status(store_, path, M1) == "unknown"
+
+    # fingerprint present but no org_layer/layers data -> legacy baseline, never changed
+    store_.set_model_materials(path, {M1: {"fingerprint": "x", "scheme": "materialsdb-fp/1", "layers": []}})
+    assert _material_status(store_, path, M1) == "unknown"
+
+
+def test_match_layers_id_and_thickness(api):
+    from materialsdb.gui.server import _match_layers
+
+    _server, state = api
+    store_ = state.resolve_store()
+
+    # layer_id match wins
+    result = _match_layers(store_, M1, [{"layer_id": L1A, "thick": 0.2}, {"layer_id": L1B, "thick": 0.1}])
+    assert result["state"] == "updatable"
+    assert result["mapping"] == {L1A: L1A, L1B: L1B}
+    assert result["candidates"] == {}
+
+    # edited layer id -> fall back to thickness
+    result = _match_layers(store_, M1, [{"layer_id": "model-x", "thick": 0.2}, {"layer_id": "model-y", "thick": 0.1}])
+    assert result["state"] == "updatable"
+    assert result["mapping"] == {"model-x": L1A, "model-y": L1B}
+
+    # thick-less model layer with exactly one new layer
+    result = _match_layers(store_, M2, [{"layer_id": "model-z", "thick": None}])
+    assert result["state"] == "updatable"
+    assert result["mapping"] == {"model-z": L2B}
+
+    # thick-less model layer with several new layers -> unmatched
+    result = _match_layers(store_, M1, [{"layer_id": "model-z", "thick": 0}])
+    assert result["state"] == "unmatched"
+
+    # no match at all -> unmatched
+    result = _match_layers(store_, M1, [{"layer_id": "model-q", "thick": 0.999}])
+    assert result["state"] == "unmatched"
+
+
+def test_match_layers_ambiguous(tmp_path):
+    from materialsdb.gui.server import _match_layers
+    from materialsdb.store import MaterialStore
+
+    xml = tmp_path / "ambig.xml"
+    xml.write_text(_AMBIGUOUS_XML, encoding="utf-8")
+    store_ = MaterialStore(db_path=tmp_path / "ambig.db")
+    store_.refresh(paths=[xml])
+    try:
+        result = _match_layers(store_, _AMBIG_ID, [{"layer_id": "model-x", "thick": 0.1}])
+        assert result["state"] == "ambiguous"
+        assert result["candidates"] == {"model-x": [_AMBIG_LAYER_A, _AMBIG_LAYER_B]}
+        assert result["mapping"] == {}
+    finally:
+        store_.close()
+
+
+def test_match_layers_btk_is_unmatched(api):
+    from materialsdb.gui.server import _match_layers
+
+    _server, state = api
+    result = _match_layers(state.resolve_store(), M4, [{"layer_id": "x", "thick": 0.2}])
+    assert result["state"] == "unmatched"
+
+
+def test_model_changes_without_model(api):
+    server, _state = api
+    status, payload = request(server, "GET", "/api/model/changes")
+    assert status == 200
+    assert payload == {
+        "model_path": None,
+        "seen_at": None,
+        "counts": {"changed": 0, "gone": 0, "unknown": 0},
+        "changed": [],
+        "gone": [],
+        "unknown": [],
+    }
+
+
+def test_model_changes_endpoint_counts_report_and_matching(api):
+    from materialsdb.gui.listener import build_add_materials_payload
+
+    server, state = api
+    store_ = state.resolve_store()
+    path = "/m/changes.ifc"
+    _ingest_model(
+        server,
+        state,
+        path,
+        {
+            M1: {
+                "fingerprint": "stale",
+                "scheme": "materialsdb-fp/1",
+                "layers": [{"layer_id": L1A, "thick": 0.2}, {"layer_id": L1B, "thick": 0.1}],
+            },
+            M2: {"fingerprint": None, "scheme": "materialsdb-fp/1", "layers": [{"layer_id": L2B, "thick": 0.15}]},
+            "ghost": {"fingerprint": "ffff", "scheme": "materialsdb-fp/1", "layers": [{"layer_id": "g", "thick": 0.3}]},
+        },
+    )
+
+    # record a push snapshot for M1 whose stored name differs from the store
+    payload, _missing = build_add_materials_payload(store_, [{"id": M1}])
+    snapshot = dict(payload["materials"][0])
+    snapshot["name"] = "Old name"
+    store_.record_pushed_materials(path, [snapshot])
+
+    status, body = request(server, "GET", "/api/model/changes")
+    assert status == 200
+    assert body["model_path"] == path
+    assert body["seen_at"] is not None
+    assert body["counts"] == {"changed": 1, "gone": 1, "unknown": 1}
+    assert body["gone"] == ["ghost"]
+    assert body["unknown"] == [M2]
+
+    assert len(body["changed"]) == 1
+    item = body["changed"][0]
+    assert item["material_id"] == M1
+    assert set(item) == {"material_id", "matching", "report", "has_snapshot"}
+    assert item["matching"]["state"] == "updatable"
+    assert item["matching"]["mapping"] == {L1A: L1A, L1B: L1B}
+    assert item["has_snapshot"] is True
+    assert {"field": "name", "old": "Old name", "new": "Isolant A"} in item["report"]
+
+
+def test_model_changes_no_snapshot_report_empty(api):
+    server, state = api
+    path = "/m/nosnap.ifc"
+    _ingest_model(
+        server,
+        state,
+        path,
+        {M1: {"fingerprint": "stale", "scheme": "materialsdb-fp/1", "layers": [{"layer_id": L1A, "thick": 0.2}]}},
+    )
+    status, body = request(server, "GET", "/api/model/changes")
+    assert status == 200
+    assert len(body["changed"]) == 1
+    assert body["changed"][0]["report"] == []
+    assert body["changed"][0]["has_snapshot"] is False
+
+
+def test_model_changes_no_listener_serves_cached_seen_at(api):
+    server, state = api
+    store_ = state.resolve_store()
+    path = "/m/offline.ifc"
+    # no listener registered: the model map is only cached by path
+    _ingest_model(
+        server,
+        state,
+        path,
+        {
+            M2: {
+                "fingerprint": store_.material_fingerprint(M2),
+                "scheme": "materialsdb-fp/1",
+                "layers": [{"layer_id": L2B, "thick": 0.15}],
+            }
+        },
+        register=False,
+    )
+
+    status, body = request(server, "GET", "/api/model/changes")
+    assert status == 200
+    assert body["model_path"] == path
+    assert body["seen_at"] is not None
+    assert body["counts"] == {"changed": 0, "gone": 0, "unknown": 0}
+    assert body["changed"] == [] and body["gone"] == [] and body["unknown"] == []
+
+
+def test_materials_rows_carry_model_status(api):
+    server, state = api
+    path = "/m/list.ifc"
+    _ingest_model(
+        server,
+        state,
+        path,
+        {M1: {"fingerprint": "stale", "scheme": "materialsdb-fp/1", "layers": [{"layer_id": L1A, "thick": 0.2}]}},
+    )
+    status, payload = request(server, "GET", "/api/materials?category=Insulation")
+    assert status == 200
+    by_id = {row["id"]: row for row in payload["materials"]}
+    assert by_id[M1]["model"] == "changed"
+    assert by_id[M4]["model"] == "absent"
+
+
 def test_discovery_write_and_remove(tmp_path, monkeypatch):
     monkeypatch.setattr("materialsdb.cache.get_cache_folder", lambda: tmp_path)
 
