@@ -388,13 +388,14 @@ def _material_at(file, layer_id):
     return next(m for m in file.by_type("IfcMaterial") if insert._org_layer_id_of(m) == layer_id)
 
 
-def test_model_layers_groups_by_org_layer(store):
+def test_model_layers_keys_by_entity_id(store):
     file = ifcopenshell.file(schema="IFC4")
     apply_add_materials(file, _payload(store))
 
     layers = insert._model_layers(file, MATERIAL_ID)
 
-    assert set(layers) == {A1, A2}
+    entity_ids = {str(material.id()) for material in file.by_type("IfcMaterial")}
+    assert set(layers) == entity_ids
     for entities in layers.values():
         assert len(entities) == 1
         material, layer = entities[0]
@@ -418,7 +419,7 @@ def test_apply_update_refreshes_material_in_place(store):
     entry["description"] = "desc v2"
     entry["category"] = "Category v2"
     entry["layer_id"] = A1_NEW
-    entry["update"] = {A1: A1_NEW}
+    entry["update"] = {str(material.id()): A1_NEW}
     entry["psets"]["materialsdb.org_layer"]["layer_id"] = A1_NEW
     entry["psets"]["materialsdb.org_layer"]["thick"] = 0.25
     entry["layer"]["layer_id"] = A1_NEW
@@ -436,8 +437,8 @@ def test_apply_update_refreshes_material_in_place(store):
     assert psets["materialsdb.org_layer"]["layer_id"] == A1_NEW  # re-pointed to the new id
     assert psets["materialsdb.org_layer"]["thick"] == pytest.approx(0.25)
     layer = next(layer for layer in file.by_type("IfcMaterialLayer") if layer.Material == material)
-    assert layer.LayerThickness == pytest.approx(0.25)
-    assert layer.Name == "Isolant A v2 | 250mm"
+    assert layer.LayerThickness == pytest.approx(0.2)  # model dimension never overwritten
+    assert layer.Name == "Isolant A v2 | 200mm"
     assert layer.Description == A1_NEW
 
 
@@ -1063,7 +1064,8 @@ def test_construction_update_refreshes_material_in_place():
     ifcopenshell.api.run("pset.edit_pset", file, pset=foreign, properties={"Reference": "keep"})
 
     summary = apply_add_construction(
-        file, _one_layer_construction("new", mode="update", update={A1: A1}, name="Isolant A v2")
+        file,
+        _one_layer_construction("new", mode="update", update={str(material.id()): A1}, name="Isolant A v2"),
     )
 
     assert summary["update_missing"] == []
@@ -1369,3 +1371,48 @@ def test_construction_without_u_values_writes_no_psets():
 
     assert summary["psets_written"] == 0
     assert ifcopenshell.util.element.get_pset(file.by_type("IfcWallType")[0], name="Pset_WallCommon") is None
+
+
+def test_apply_update_force_refreshes_current_fingerprint(store):
+    """force=True refreshes in place even when the model fingerprint already
+    matches the store's."""
+    file = ifcopenshell.file(schema="IFC4")
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+    entry = next(e for e in payload["materials"] if e["layer_id"] == A1)
+    material = _material_at(file, A1)
+    entity_id = material.id()
+
+    entry["mode"] = "update"
+    entry["force"] = True
+    entry["name"] = "Forced A"
+    entry["update"] = {str(entity_id): A1}  # same store layer, refreshed data
+
+    summary = {}
+    assert apply_add_materials(file, {"materials": [entry]}, summary) == 0
+
+    assert material.id() == entity_id
+    assert material.Name == "Forced A"
+    assert summary["update_missing"] == []
+
+
+def test_apply_update_force_refreshes_legacy_identity_only(store):
+    """A legacy model material (identity pset only, no fingerprint, no psets)
+    is refreshed in place when forced."""
+    file = ifcopenshell.file(schema="IFC4")
+    material = ifcopenshell.api.run("material.add_material", file, name="Legacy")
+    insert._add_identity_pset(file, material, {"material_id": MATERIAL_ID, "company_id": "C1", "company": "Co"})
+    assert _fingerprint_of(material) is None
+
+    entry = next(e for e in _payload(store)["materials"] if e["layer_id"] == A1)
+    entry["mode"] = "update"
+    entry["force"] = True
+    entry["update"] = {str(material.id()): A1}
+
+    summary = {}
+    apply_add_materials(file, {"materials": [entry]}, summary)
+
+    psets = ifcopenshell.util.element.get_psets(material)
+    assert psets["materialsdb"]["fingerprint"]
+    assert psets["materialsdb.org_layer"]["layer_id"] == A1
+    assert summary["update_missing"] == []

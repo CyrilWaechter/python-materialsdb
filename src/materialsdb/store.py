@@ -77,6 +77,14 @@ class MaterialStore:
         self.connection.execute("PRAGMA journal_mode=WAL")
         self.connection.executescript(_SCHEMA)
         self._ensure_schema_version()
+        self._ensure_model_materials_columns()
+
+    def _ensure_model_materials_columns(self):
+        """Additive migration: existing databases predate `used_in`."""
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(model_materials)")}
+        if "used_in" not in columns:
+            self.connection.execute("ALTER TABLE model_materials ADD COLUMN used_in TEXT")
+            self.connection.commit()
 
     # ---------- meta / lifecycle ----------
 
@@ -316,14 +324,15 @@ class MaterialStore:
         seen_at = datetime.datetime.now(datetime.timezone.utc).timestamp()
         for material_id, info in materials.items():
             self.connection.execute(
-                "INSERT INTO model_materials(model_path, material_id, fingerprint, scheme, layers, seen_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO model_materials(model_path, material_id, fingerprint, scheme, layers, used_in, "
+                "seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     model_path,
                     material_id,
                     info.get("fingerprint"),
                     info.get("scheme"),
                     json.dumps(info.get("layers", [])),
+                    json.dumps(info.get("used_in", [])),
                     seen_at,
                 ),
             )
@@ -331,7 +340,7 @@ class MaterialStore:
 
     def get_model_materials(self, model_path: str) -> dict[str, dict]:
         rows = self.connection.execute(
-            "SELECT material_id, fingerprint, scheme, layers FROM model_materials WHERE model_path=?",
+            "SELECT material_id, fingerprint, scheme, layers, used_in FROM model_materials WHERE model_path=?",
             (model_path,),
         ).fetchall()
         return {
@@ -339,8 +348,9 @@ class MaterialStore:
                 "fingerprint": fingerprint,
                 "scheme": scheme,
                 "layers": json.loads(layers) if layers is not None else [],
+                "used_in": json.loads(used_in) if used_in is not None else [],
             }
-            for material_id, fingerprint, scheme, layers in rows
+            for material_id, fingerprint, scheme, layers, used_in in rows
         }
 
     def model_seen_at(self, model_path: str) -> float | None:

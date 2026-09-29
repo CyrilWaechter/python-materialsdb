@@ -82,6 +82,7 @@ def build_add_materials_payload(store_, items, country=None, lang=None):
                     "mode": item.get("mode", "skip"),
                     "replaces": item.get("replaces"),
                     "update": item.get("update"),
+                    "force": bool(item.get("force")),
                     "psets": _resolved_psets(layer, country),
                     "layer": {"layer_id": str(layer.id), "thick_m": thick / 1000} if thick else None,
                 }
@@ -212,6 +213,7 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
             "mode": raw_layer.get("mode", "skip"),
             "replaces": raw_layer.get("replaces"),
             "update": raw_layer.get("update"),
+            "force": bool(raw_layer.get("force")),
         }
         if resolved_layer is not None:
             material_entry["psets"] = _resolved_psets(resolved_layer, country)

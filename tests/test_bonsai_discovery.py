@@ -151,28 +151,60 @@ def _scratch_material(file, material_id, *, fingerprint=None, scheme=None, layer
 
 def test_model_material_map_identity_and_layers():
     """The map keys by material_id, reads fingerprint/scheme from the identity
-    pset and dedupes layers by layer_id (a material is one entity per layer);
-    materials without an org_layer pset stay layer-less (legacy baseline)."""
+    pset and keeps one layer entry per IfcMaterial (keyed by entity id, so
+    legacy materials with no org_layer stay addressable)."""
     ifcopenshell = pytest.importorskip("ifcopenshell")
     api = pytest.importorskip("ifcopenshell.api")
 
     file = ifcopenshell.file(schema="IFC4")
-    _scratch_material(file, "ID1", fingerprint="fp1", scheme="materialsdb-fp/1", layer_id="L1", thick=0.1)
-    _scratch_material(file, "ID1", fingerprint="fp1", scheme="materialsdb-fp/1", layer_id="L2", thick=0.2)
-    _scratch_material(file, "ID1", fingerprint="fp1", scheme="materialsdb-fp/1", layer_id="L1", thick=0.1)  # dupe
-    _scratch_material(file, "ID2", fingerprint="fp2", scheme="materialsdb-fp/1")
-    _scratch_material(file, "ID3", layer_id="L3", thick=0.3)  # no fingerprint -> scheme None
+    m1 = _scratch_material(file, "ID1", fingerprint="fp1", scheme="materialsdb-fp/1", layer_id="L1", thick=0.1)
+    m2 = _scratch_material(file, "ID1", fingerprint="fp1", scheme="materialsdb-fp/1", layer_id="L2", thick=0.2)
+    m3 = _scratch_material(file, "ID2", fingerprint="fp2", scheme="materialsdb-fp/1")
+    m4 = _scratch_material(file, "ID3", layer_id="L3", thick=0.3)  # no fingerprint -> scheme None
     api.run("material.add_material", file, name="plain")  # no identity -> excluded
 
     assert discovery._model_material_map(file) == {
         "ID1": {
             "fingerprint": "fp1",
             "scheme": "materialsdb-fp/1",
-            "layers": [{"layer_id": "L1", "thick": 0.1}, {"layer_id": "L2", "thick": 0.2}],
+            "used_in": [],
+            "layers": [
+                {"entity_id": str(m1.id()), "layer_id": "L1", "thick": 0.1},
+                {"entity_id": str(m2.id()), "layer_id": "L2", "thick": 0.2},
+            ],
         },
-        "ID2": {"fingerprint": "fp2", "scheme": "materialsdb-fp/1", "layers": []},
-        "ID3": {"fingerprint": None, "scheme": None, "layers": [{"layer_id": "L3", "thick": 0.3}]},
+        "ID2": {
+            "fingerprint": "fp2",
+            "scheme": "materialsdb-fp/1",
+            "used_in": [],
+            "layers": [{"entity_id": str(m3.id()), "layer_id": None, "thick": None}],
+        },
+        "ID3": {
+            "fingerprint": None,
+            "scheme": None,
+            "used_in": [],
+            "layers": [{"entity_id": str(m4.id()), "layer_id": "L3", "thick": 0.3}],
+        },
     }
+
+
+def test_model_material_map_marks_used_materials():
+    """Materials referenced by wall/slab/roof associations (types or
+    occurrences, directly or via a layer set) are flagged in `used_in`."""
+    ifcopenshell = pytest.importorskip("ifcopenshell")
+    api = pytest.importorskip("ifcopenshell.api")
+
+    file = ifcopenshell.file(schema="IFC4")
+    used = _scratch_material(file, "ID1", layer_id="L1", thick=0.2)
+    _scratch_material(file, "ID2", layer_id="L2", thick=0.1)
+    wall = api.run("root.create_entity", file, ifc_class="IfcWall", name="W")
+    layer_set = api.run("material.add_material_set", file, name="S", set_type="IfcMaterialLayerSet")
+    api.run("material.add_layer", file, layer_set=layer_set, material=used)
+    api.run("material.assign_material", file, products=[wall], type="IfcMaterialLayerSet", material=layer_set)
+
+    result = discovery._model_material_map(file)
+    assert result["ID1"]["used_in"] == ["IfcWall"]
+    assert result["ID2"]["used_in"] == []
 
 
 def test_model_material_map_falls_back_to_layer_thickness():
@@ -187,4 +219,6 @@ def test_model_material_map_falls_back_to_layer_thickness():
     layer = api.run("material.add_layer", file, layer_set=layer_set, material=material)
     api.run("material.edit_layer", file, layer=layer, attributes={"LayerThickness": 0.15})
 
-    assert discovery._model_material_map(file)["ID1"]["layers"] == [{"layer_id": "L1", "thick": 0.15}]
+    assert discovery._model_material_map(file)["ID1"]["layers"] == [
+        {"entity_id": str(material.id()), "layer_id": "L1", "thick": 0.15}
+    ]

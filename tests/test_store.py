@@ -237,7 +237,14 @@ def test_model_materials_roundtrip(tmp_path):
             {"ID1": {"fingerprint": "f", "scheme": "s", "layers": [{"layer_id": "L1", "thick": 0.2}]}},
         )
         got = store.get_model_materials("/m/a.ifc")
-        assert got == {"ID1": {"fingerprint": "f", "scheme": "s", "layers": [{"layer_id": "L1", "thick": 0.2}]}}
+        assert got == {
+            "ID1": {
+                "fingerprint": "f",
+                "scheme": "s",
+                "layers": [{"layer_id": "L1", "thick": 0.2}],
+                "used_in": [],
+            }
+        }
         assert store.model_seen_at("/m/a.ifc") is not None
         store.set_model_materials("/m/a.ifc", {})  # replace-all
         assert store.get_model_materials("/m/a.ifc") == {}

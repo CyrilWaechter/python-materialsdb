@@ -117,14 +117,15 @@ def _layer_of(file, material):
 
 
 def _model_layers(file, material_id) -> dict[str, list[tuple]]:
-    """model layer id -> [(IfcMaterial, IfcMaterialLayer | None)] for a material.
+    """IfcMaterial entity id (string) -> [(IfcMaterial, IfcMaterialLayer | None)].
 
-    The key is the `materialsdb.org_layer.layer_id` (None when absent)."""
+    Keyed by entity id rather than the `materialsdb.org_layer` GUID so legacy
+    materials with no psets stay addressable by the server's update mapping."""
     found: dict[str, list[tuple]] = {}
     for material in file.by_type("IfcMaterial"):
         if _material_id_of(material) != material_id:
             continue
-        found.setdefault(_org_layer_id_of(material), []).append((material, _layer_of(file, material)))
+        found.setdefault(str(material.id()), []).append((material, _layer_of(file, material)))
     return found
 
 
@@ -155,11 +156,12 @@ def _refresh_material(file, entry, material) -> None:
 
 
 def _refresh_layer(file, entry, layer) -> None:
-    thickness = _entry_thickness(entry)
-    if thickness is None:
-        return
-    layer.LayerThickness = thickness
-    layer.Name = f"{entry['name']} | {round(thickness * 1000)}mm"
+    """Re-label the model layer and re-point its org_layer identity.
+
+    `IfcMaterialLayer.LayerThickness` is the model's own dimension (the design
+    thickness chosen in the construction maker) and is never changed here."""
+    thickness = layer.LayerThickness or _entry_thickness(entry)
+    layer.Name = f"{entry['name']} | {round(thickness * 1000)}mm" if thickness else str(entry["name"])
     layer.Description = str(_entry_layer_id(entry) or "")
 
 
@@ -169,11 +171,13 @@ def _apply_update(file, entry, material, layers_by_id, summary) -> bool:
     Only mappings whose new layer id equals the entry's own layer id can be
     applied here; a mapping targeting another entry's layer, or a model layer
     absent from `layers_by_id`, is recorded in `summary["update_missing"]`
-    rather than dropped silently. A legacy entity with no fingerprint is
-    backfilled; an entity whose fingerprint already matches is left alone.
-    Returns True when at least one entity was refreshed in place."""
+    rather than dropped silently. Without `force`, a legacy entity with no
+    fingerprint is backfilled and an entity whose fingerprint already matches is
+    left alone; with `force` the data is refreshed regardless. Returns True when
+    at least one entity was refreshed in place."""
     new_layer_id = _entry_layer_id(entry)
     new_fingerprint = entry["identity"].get("fingerprint")
+    force = bool(entry.get("force"))
     refreshed = False
     for model_layer_id, mapped_new_id in (entry.get("update") or {}).items():
         if mapped_new_id != new_layer_id:
@@ -187,11 +191,12 @@ def _apply_update(file, entry, material, layers_by_id, summary) -> bool:
             continue
         for model_material, model_layer in entities:
             current = _fingerprint_of(model_material)
-            if current is None:
-                _write_fingerprint(file, model_material, entry["identity"])
-                continue
-            if current == new_fingerprint:
-                continue
+            if not force:
+                if current is None:
+                    _write_fingerprint(file, model_material, entry["identity"])
+                    continue
+                if current == new_fingerprint:
+                    continue
             _refresh_material(file, entry, model_material)
             refreshed = True
             if model_layer is not None:
@@ -318,7 +323,11 @@ def _apply_replace(file, entry, summary) -> None:
         layer_id = replaces.get("layer_id")
         targets = _model_layers(file, material_id)
         if layer_id is not None:
-            pairs = list(targets.get(layer_id) or [])
+            pairs = list(targets.get(str(layer_id)) or [])
+            if not pairs:
+                # `layer_id` may be the materialsdb.org_layer GUID rather than
+                # the model entity id used as the map key
+                pairs = [pair for group in targets.values() for pair in group if _org_layer_id_of(pair[0]) == layer_id]
         else:
             pairs = [pair for group in targets.values() for pair in group]
         if not pairs:

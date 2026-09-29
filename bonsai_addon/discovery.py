@@ -30,14 +30,43 @@ def clear_gui_info():
     (_cache_folder() / "gui.json").unlink(missing_ok=True)
 
 
-def _model_material_map(file):
-    """material_id -> {"fingerprint", "scheme", "layers": [{"layer_id", "thick"}]}.
+USED_CLASSES = ("IfcWall", "IfcSlab", "IfcRoof", "IfcWallType", "IfcSlabType", "IfcRoofType")
 
-    Scans IfcMaterial identity (`materialsdb`) + `materialsdb.org_layer` psets,
-    deduping per material_id and per layer_id (a material is one entity per
-    layer). `thick` is the org_layer value (metres), else the material's
-    IfcMaterialLayer thickness; a material with no org_layer pset has no layers
-    (the server treats it as a legacy baseline)."""
+
+def used_materials_by_class(file):
+    """IfcMaterial entity id -> sorted class names using it (walls/slabs/roofs).
+
+    Relationship-driven: an element/type counts when it is a RelatedObject of an
+    IfcRelAssociatesMaterial. Covers occurrences and types, so materials
+    inherited from a type are included."""
+    used = {}
+    for rel in file.by_type("IfcRelAssociatesMaterial"):
+        classes = sorted({obj.is_a() for obj in rel.RelatedObjects or () if obj.is_a() in USED_CLASSES})
+        if not classes:
+            continue
+        material = rel.RelatingMaterial
+        if material is None:
+            continue
+        while material.is_a("IfcMaterialLayerSetUsage"):
+            material = material.ForLayerSet
+        materials = []
+        if material.is_a("IfcMaterialLayerSet"):
+            materials = [layer.Material for layer in material.MaterialLayers or () if layer.Material is not None]
+        elif material.is_a("IfcMaterial"):
+            materials = [material]
+        for entity in materials:
+            used.setdefault(entity.id(), set()).update(classes)
+    return {entity_id: sorted(classes) for entity_id, classes in used.items()}
+
+
+def _model_material_map(file):
+    """material_id -> {"fingerprint", "scheme", "used_in", "layers"}.
+
+    ``layers`` holds one entry per model IfcMaterial:
+    ``{"entity_id", "layer_id", "thick"}`` — ``entity_id`` is the STEP id (a
+    stable key even for legacy materials with no `materialsdb.org_layer`),
+    ``layer_id`` the org_layer GUID when present, and ``thick`` the org_layer
+    thickness (metres), else the material's IfcMaterialLayer thickness."""
     import ifcopenshell.util.element
 
     thickness_by_material = {}
@@ -45,6 +74,7 @@ def _model_material_map(file):
         if layer.Material is not None and layer.Material not in thickness_by_material:
             thickness_by_material[layer.Material] = layer.LayerThickness
 
+    used = used_materials_by_class(file)
     materials = {}
     for material in file.by_type("IfcMaterial"):
         psets = ifcopenshell.util.element.get_psets(material)
@@ -52,22 +82,25 @@ def _model_material_map(file):
         material_id = identity.get("material_id")
         if material_id is None:
             continue
-        entry = materials.setdefault(material_id, {"fingerprint": None, "scheme": None, "layers": []})
-        if entry["fingerprint"] is None:
-            entry["fingerprint"] = identity.get("fingerprint")
-        if entry["scheme"] is None:
-            entry["scheme"] = identity.get("fingerprint_scheme")
+        entry = materials.setdefault(material_id, {"fingerprint": None, "scheme": None, "used_in": [], "layers": []})
+        if identity.get("fingerprint") and entry["fingerprint"] is None:
+            entry["fingerprint"] = identity["fingerprint"]
+        if identity.get("fingerprint_scheme") and entry["scheme"] is None:
+            entry["scheme"] = identity["fingerprint_scheme"]
+        if material.id() in used:
+            entry["used_in"] = sorted(set(entry["used_in"]) | set(used[material.id()]))
         org_layer = psets.get("materialsdb.org_layer") or {}
         layer_id = org_layer.get("layer_id")
-        if layer_id is None:
-            continue
-        layer_id = str(layer_id)
-        if any(existing["layer_id"] == layer_id for existing in entry["layers"]):
-            continue
         thick = org_layer.get("thick")
         if thick is None:
             thick = thickness_by_material.get(material)
-        entry["layers"].append({"layer_id": layer_id, "thick": thick})
+        entry["layers"].append(
+            {
+                "entity_id": str(material.id()),
+                "layer_id": str(layer_id) if layer_id is not None else None,
+                "thick": thick,
+            }
+        )
     return materials
 
 

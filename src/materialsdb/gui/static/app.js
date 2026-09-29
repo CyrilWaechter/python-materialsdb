@@ -483,6 +483,8 @@ function renderModelChanges(data) {
   }
   applyModel();
   if (openReportId) openChangeReport(openReportId);
+  const forceButton = document.getElementById("force-update");
+  if (forceButton) forceButton.disabled = !modelChanges.model_path;
 }
 
 async function refreshModelChanges() {
@@ -491,6 +493,58 @@ async function refreshModelChanges() {
   } catch {
     renderModelChanges(null);
   }
+}
+
+async function forceUpdate() {
+  const result = await api("/api/model/force-update", { method: "POST", body: "{}" });
+  showForceResult(result);
+}
+
+function showForceResult(result) {
+  const counts = result.counts || {};
+  setStatus(
+    `force update: ${counts.queued || 0} queued, ${counts.unresolved || 0} need a layer choice, ` +
+      `${counts.skipped || 0} not in store`
+  );
+  renderForcePanel(result.unresolved || {});
+  refreshModelChanges();
+}
+
+function renderForcePanel(unresolved) {
+  const box = document.getElementById("force-panel");
+  if (!box) return;
+  const materialIds = Object.keys(unresolved || {});
+  if (!materialIds.length) {
+    box.style.display = "none";
+    box.innerHTML = "";
+    return;
+  }
+  const rows = [];
+  for (const materialId of materialIds) {
+    for (const layer of unresolved[materialId] || []) {
+      const options = (layer.candidates || []).map((id) => candidateOption(id, null)).join("");
+      const label = layer.thick ? `${Math.round(layer.thick * 1000)} mm` : shortId(layer.entity_id);
+      rows.push(
+        `<label style="display:block">${esc(shortId(materialId))} \u00b7 ${esc(label)} \u2192 ` +
+          `<select data-force-entity="${esc(layer.entity_id)}">${options}</select></label>`
+      );
+    }
+  }
+  box.innerHTML =
+    `<b>choose the store layer for these model layers</b>` +
+    rows.join("") +
+    ` <div><button id="force-send">send choices</button></div>`;
+  box.style.display = "block";
+  document.getElementById("force-send").onclick = () => sendForceChoices().catch((err) => setStatus(err.message));
+}
+
+async function sendForceChoices() {
+  const choices = {};
+  document.querySelectorAll("#force-panel select[data-force-entity]").forEach((select) => {
+    if (select.value) choices[select.dataset.forceEntity] = select.value;
+  });
+  const result = await api("/api/model/force-update", { method: "POST", body: JSON.stringify({ choices }) });
+  showForceResult(result);
 }
 
 function candidateOption(candidate, chosenId) {
@@ -612,6 +666,7 @@ $("pick").onclick = () => pickIds("pick").catch((err) => setStatus(err.message))
 $("open").onclick = () => openSession().catch((err) => setStatus(err.message));
 $("save").onclick = () => saveSession().catch((err) => setStatus(err.message));
 $("refresh").onclick = runRefresh;
+$("force-update").onclick = () => forceUpdate().catch((err) => setStatus(err.message));
 
 $("rows").addEventListener("click", (event) => {
   const button = event.target.closest && event.target.closest("[data-model-action]");

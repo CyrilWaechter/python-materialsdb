@@ -1245,13 +1245,20 @@ def test_match_layers_id_and_thickness(api):
     assert result["state"] == "updatable"
     assert result["mapping"] == {"model-z": L2B}
 
-    # thick-less model layer with several new layers -> unmatched
+    # thick-less model layer with several new layers -> the user picks
     result = _match_layers(store_, M1, [{"layer_id": "model-z", "thick": 0}])
-    assert result["state"] == "unmatched"
+    assert result["state"] == "ambiguous"
+    assert set(result["candidates"]["model-z"]) == {L1A, L1B}
 
-    # no match at all -> unmatched
+    # no thickness match -> all store layers proposed as candidates
     result = _match_layers(store_, M1, [{"layer_id": "model-q", "thick": 0.999}])
-    assert result["state"] == "unmatched"
+    assert result["state"] == "ambiguous"
+    assert set(result["candidates"]["model-q"]) == {L1A, L1B}
+
+    # entity id keys the mapping (legacy model layers have no org_layer id)
+    result = _match_layers(store_, M1, [{"entity_id": "42", "layer_id": None, "thick": 0.2}])
+    assert result["state"] == "updatable"
+    assert result["mapping"] == {"42": L1A}
 
 
 def test_match_layers_ambiguous(tmp_path):
@@ -1423,9 +1430,75 @@ def test_model_changes_report_unmatched_layer_still_shows_scalars(api):
     status, body = request(server, "GET", "/api/model/changes")
     assert status == 200
     item = body["changed"][0]
-    assert item["matching"]["state"] == "unmatched"
+    # no thickness match with several store layers: the user is offered
+    # candidates rather than an unusable material
+    assert item["matching"]["state"] == "ambiguous"
+    assert item["matching"]["candidates"]
     assert item["has_snapshot"] is True
     assert {"field": "name", "old": "Old A", "new": "Isolant A"} in item["report"]
+
+
+def test_model_force_update_queues_used_materials(api):
+    """The force endpoint queues in-place updates for every used material that
+    resolves, regardless of its fingerprint state."""
+    server, state = api
+    store_ = state.resolve_store()
+    path = "/m/force.ifc"
+    _ingest_model(
+        server,
+        state,
+        path,
+        {
+            M1: {
+                "fingerprint": store_.material_fingerprint(M1),  # current: force still queues
+                "scheme": "materialsdb-fp/1",
+                "used_in": ["IfcSlab"],
+                "layers": [{"entity_id": "77", "layer_id": L1A, "thick": 0.2}],
+            },
+            M2: {
+                "fingerprint": None,
+                "scheme": None,
+                "used_in": [],  # unused -> untouched
+                "layers": [{"entity_id": "78", "layer_id": L2B, "thick": 0.15}],
+            },
+        },
+    )
+
+    status, body = request(server, "POST", "/api/model/force-update", payload={}, token=state.token)
+
+    assert status == 200
+    assert body["counts"]["queued"] == 1
+    assert body["counts"]["unresolved"] == 0
+    entry = state.listeners["c1"]["pending"]["materials"][0]
+    assert entry["mode"] == "update" and entry["force"] is True
+    assert entry["update"] == {"77": L1A}
+
+
+def test_model_force_update_reports_unresolved_layers(api):
+    server, state = api
+    path = "/m/force-unresolved.ifc"
+    _ingest_model(
+        server,
+        state,
+        path,
+        {
+            M1: {
+                "fingerprint": "stale",
+                "scheme": "materialsdb-fp/1",
+                "used_in": ["IfcWall"],
+                "layers": [{"entity_id": "9", "layer_id": None, "thick": 0.999}],
+            }
+        },
+    )
+
+    status, body = request(server, "POST", "/api/model/force-update", payload={}, token=state.token)
+
+    assert status == 200
+    assert body["counts"]["queued"] == 0
+    assert body["counts"]["unresolved"] == 1
+    layers = body["unresolved"][M1]
+    assert layers[0]["entity_id"] == "9"
+    assert set(layers[0]["candidates"]) == {L1A, L1B}
 
 
 def test_model_changes_no_listener_serves_cached_seen_at(api):

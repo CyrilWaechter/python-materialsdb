@@ -27,7 +27,10 @@ _GONE = "gone"
 
 # thickness values are metres; producer geometry is resolved per country and
 # can round-trip through JSON, so compare with a tight tolerance
-_THICK_EPS = 1e-9
+# metres; IFC floats carry ~1e-9 noise on values written as millimetres, so a
+# micrometre-scale tolerance is needed to match a 120 mm design layer to the
+# store's 0.12 m variant.
+_THICK_EPS = 1e-6
 
 _SCALAR_REPORT_FIELDS = ("name", "description", "category", "color", "style_name")
 
@@ -94,27 +97,42 @@ def _new_layers(store_, material_id) -> list[dict]:
 
 
 def _layer_candidates(model_layer, new_layers) -> list[str]:
-    """New layer ids a single model layer can be updated to."""
-    model_layer_id = str(model_layer.get("layer_id") or "")
-    for new_layer in new_layers:
-        if new_layer["layer_id"] == model_layer_id:
-            return [new_layer["layer_id"]]
+    """New layer ids a single model layer can be updated to, in preference order."""
+    model_layer_id = model_layer.get("layer_id")
+    if model_layer_id:
+        for new_layer in new_layers:
+            if new_layer["layer_id"] == str(model_layer_id):
+                return [new_layer["layer_id"]]
     thick = model_layer.get("thick")
-    if not thick:
-        # no usable thickness: only an unambiguous single new layer can match
-        return [new_layers[0]["layer_id"]] if len(new_layers) == 1 else []
-    return [
-        new_layer["layer_id"]
-        for new_layer in new_layers
-        if new_layer["thick"] is not None and abs(new_layer["thick"] - thick) <= _THICK_EPS
-    ]
+    matches = []
+    if thick:
+        matches = [
+            new_layer["layer_id"]
+            for new_layer in new_layers
+            if new_layer["thick"] is not None and abs(new_layer["thick"] - thick) <= _THICK_EPS
+        ]
+    if matches:
+        return matches
+    if len(new_layers) == 1:
+        # λ-only materials have a single layer with no thickness to match on
+        return [new_layers[0]["layer_id"]]
+    # No thickness match and several variants: propose them so the user can
+    # choose (the model layer's own thickness is never changed).
+    return [new_layer["layer_id"] for new_layer in new_layers]
+
+
+def _layer_key(model_layer) -> str:
+    """Stable per-model-layer key: the IfcMaterial entity id, falling back to
+    the org_layer GUID for older maps."""
+    return str(model_layer.get("entity_id") or model_layer.get("layer_id") or "")
 
 
 def _match_layers(store_, material_id, model_layers) -> dict:
     """Match the model's layers onto the current store version.
 
     Returns ``{state, mapping, candidates}`` where state is one of
-    ``updatable`` / ``ambiguous`` / ``unmatched`` / ``unknown``."""
+    ``updatable`` / ``ambiguous`` / ``unmatched`` / ``unknown``; keys are
+    per-model-layer entity ids."""
     summary = store_.get_summary(material_id)
     if summary is None:
         return {"state": _UNKNOWN, "mapping": {}, "candidates": {}}
@@ -131,12 +149,12 @@ def _match_layers(store_, material_id, model_layers) -> dict:
     candidates: dict[str, list[str]] = {}
     unmatched = False
     for model_layer in model_layers:
-        model_layer_id = str(model_layer.get("layer_id") or "")
+        key = _layer_key(model_layer)
         matches = _layer_candidates(model_layer, new_layers)
         if len(matches) == 1:
-            mapping[model_layer_id] = matches[0]
+            mapping[key] = matches[0]
         elif len(matches) > 1:
-            candidates[model_layer_id] = matches
+            candidates[key] = matches
         else:
             unmatched = True
     if unmatched:
@@ -144,6 +162,54 @@ def _match_layers(store_, material_id, model_layers) -> dict:
     if candidates:
         return {"state": "ambiguous", "mapping": mapping, "candidates": candidates}
     return {"state": "updatable", "mapping": mapping, "candidates": {}}
+
+
+def _force_plan(store_, model_path, choices) -> tuple[list[dict], dict, list[str]]:
+    """Plan a force update of every material used by walls/slabs/roofs.
+
+    Returns ``(entries, unresolved, skipped)``: resolvable model layers become
+    ``mode="update"`` ``force=True`` payload entries; layers the user has not
+    chosen yet land in ``unresolved`` with their candidate new-layer ids;
+    materials no longer in the store are ``skipped``."""
+    from materialsdb.gui.listener import build_add_materials_payload
+
+    model = store_.get_model_materials(model_path)
+    entries: list[dict] = []
+    unresolved: dict = {}
+    skipped: list[str] = []
+    for material_id, entry in model.items():
+        if not entry.get("used_in"):
+            continue
+        if store_.material_fingerprint(material_id) is None:
+            skipped.append(material_id)
+            continue
+        model_layers = entry.get("layers") or []
+        mapping = dict(_match_layers(store_, material_id, model_layers)["mapping"])
+        for entity_id, new_layer_id in (choices or {}).items():
+            if any(_layer_key(layer) == str(entity_id) for layer in model_layers):
+                mapping[str(entity_id)] = str(new_layer_id)
+        missing = [layer for layer in model_layers if _layer_key(layer) not in mapping]
+        if missing:
+            unresolved[material_id] = [
+                {
+                    "entity_id": _layer_key(layer),
+                    "thick": layer.get("thick"),
+                    "candidates": _layer_candidates(layer, _new_layers(store_, material_id)),
+                }
+                for layer in missing
+            ]
+            continue
+        payload, _missing = build_add_materials_payload(
+            store_, [{"id": material_id, "mode": "update", "force": True, "update": mapping}]
+        )
+        for entry in payload["materials"]:
+            layer_id = str(entry.get("layer_id") or "")
+            targets = {key: value for key, value in mapping.items() if value == layer_id}
+            if not targets:
+                continue
+            entry["update"] = targets
+            entries.append(entry)
+    return entries, unresolved, skipped
 
 
 def _lambda_value(entry) -> float | None:
@@ -173,7 +239,7 @@ def _change_report(store_, model_path, material_id, model_layers, mapping) -> tu
         if snapshot is None:
             continue
         has_snapshot = True
-        new_layer_id = mapping.get(model_layer_id)
+        new_layer_id = mapping.get(_layer_key(model_layer))
         paired_entry = by_layer.get(new_layer_id) if new_layer_id is not None else None
         # a model layer with no matched current layer can still surface the
         # material-level scalar changes against any current entry
@@ -430,6 +496,41 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
         except ConnectionError:
             self.close_connection = True
+
+    def _model_force_update(self, store_, payload):
+        """Queue an in-place refresh of every model material used by
+        walls/slabs/roofs, regardless of its fingerprint state."""
+        model_path = _active_model_path(self.state) or self.state.last_model_path
+        if not model_path:
+            self._send(409, {"error": "no model connected"})
+            return
+        client_id = next(
+            (cid for cid, listener in self.state.listeners.items() if listener.get("model_path") == model_path),
+            None,
+        )
+        if client_id is None:
+            self._send(409, {"error": "no listener connected for the active model"})
+            return
+        entries, unresolved, skipped = _force_plan(store_, model_path, payload.get("choices") or {})
+        if entries:
+            resolved = {"action": "add_materials", "materials": entries}
+            store_.record_pushed_materials(model_path, entries)
+            listener = self.state.listeners[client_id]
+            listener["pending"] = resolved
+            listener["last_status"] = {"status": "pending", "detail": ""}
+        self._send(
+            200,
+            {
+                "queued": len(entries),
+                "unresolved": unresolved,
+                "skipped": skipped,
+                "counts": {
+                    "queued": len(entries),
+                    "unresolved": len(unresolved),
+                    "skipped": len(skipped),
+                },
+            },
+        )
 
     def _listener_send(self, store_, payload):
         client_id = str(payload.get("client_id") or "")
@@ -836,6 +937,8 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._listener_model(payload)
             elif parsed.path == "/api/listener/send":
                 self._listener_send(store_, payload)
+            elif parsed.path == "/api/model/force-update":
+                self._model_force_update(store_, payload)
             elif parsed.path == "/api/listener/status":
                 self._listener_status(payload)
             else:
