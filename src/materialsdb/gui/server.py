@@ -223,6 +223,15 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         }
         self._send(200, {"ok": True})
 
+    def _listener_model(self, payload):
+        model_path = str(payload.get("model_path") or "")
+        materials = payload.get("materials")
+        if not isinstance(materials, dict):
+            self._send(400, {"error": "materials must be an object"})
+            return
+        self.state.resolve_store().set_model_materials(model_path, materials)
+        self._send(200, {"ok": True})
+
     def _listener_poll(self, parsed):
         client_id = (parse_qs(parsed.query).get("client_id") or [""])[0]
         listener = self.state.listeners.get(client_id)
@@ -276,6 +285,14 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             self._send(400, {"error": f"unsupported action: {action}"})
             return
         listener["pending"] = resolved
+        # record what was pushed so a later task can diff the model against it
+        model_path = listener.get("model_path")
+        if model_path:
+            if action == "add_materials":
+                entries = resolved["materials"]
+            else:
+                entries = [layer["material"] for layer in resolved["construction"]["layers"] if layer.get("material")]
+            store_.record_pushed_materials(model_path, entries)
         # a fresh push invalidates the previous applied/error mark: the
         # dropdown shows a pending state until the add-on reports the new one
         listener["last_status"] = {"status": "pending", "detail": ""}
@@ -581,6 +598,8 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._construction_save(store_, parsed, payload)
             elif parsed.path == "/api/listener/register":
                 self._listener_register(payload)
+            elif parsed.path == "/api/listener/model":
+                self._listener_model(payload)
             elif parsed.path == "/api/listener/send":
                 self._listener_send(store_, payload)
             elif parsed.path == "/api/listener/status":

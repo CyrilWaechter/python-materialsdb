@@ -788,6 +788,94 @@ def test_listener_register_poll_send_roundtrip(api):
     assert status == 204  # cleared
 
 
+def test_listener_model_map_ingested(api, tmp_path):
+    server, state = api
+    model_path = str(tmp_path / "m.ifc")
+    payload = {
+        "client_id": "c1",
+        "model_path": model_path,
+        "scheme": "materialsdb-fp/1",
+        "materials": {"ID1": {"fingerprint": "f", "scheme": "materialsdb-fp/1", "layers": []}},
+    }
+    status, body = request(server, "POST", "/api/listener/model", payload=payload, token=state.token)
+    assert status == 200
+    assert body == {"ok": True}
+    assert state.resolve_store().get_model_materials(model_path)["ID1"]["fingerprint"] == "f"
+
+
+def test_listener_model_requires_token(api, tmp_path):
+    server, _state = api
+    status, _ = request(
+        server,
+        "POST",
+        "/api/listener/model",
+        payload={"client_id": "c1", "model_path": str(tmp_path / "m.ifc"), "materials": {}},
+    )
+    assert status == 403
+
+
+def test_listener_send_records_snapshot(api):
+    server, state = api
+    model_path = "/tmp/snapshot.ifc"
+    request(
+        server,
+        "POST",
+        "/api/listener/register",
+        payload={"client_id": "c1", "model_path": model_path},
+        token=state.token,
+    )
+
+    status, _ = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={
+            "client_id": "c1",
+            "action": "add_materials",
+            "items": [{"id": "00000000-0000-0000-0000-000000000001"}],
+        },
+        token=state.token,
+    )
+    assert status == 200
+    snapshot = state.resolve_store().get_pushed_material(
+        model_path, "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-0000000000a1"
+    )
+    assert snapshot is not None
+    assert snapshot["identity"]["material_id"] == "00000000-0000-0000-0000-000000000001"
+
+
+def test_listener_send_construction_records_snapshot(api):
+    server, state = api
+    model_path = "/tmp/snapshot-construction.ifc"
+    request(
+        server,
+        "POST",
+        "/api/listener/register",
+        payload={"client_id": "c1", "model_path": model_path},
+        token=state.token,
+    )
+
+    status, _ = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={
+            "client_id": "c1",
+            "action": "add_construction",
+            "construction": {
+                "name": "snap wall",
+                "design_usage": "consDesignForWall",
+                "layers": [{"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15}],
+            },
+        },
+        token=state.token,
+    )
+    assert status == 200
+    snapshot = state.resolve_store().get_pushed_material(model_path, "00000000-0000-0000-0000-000000000002", "")
+    assert snapshot is not None
+    assert snapshot["identity"]["material_id"] == "00000000-0000-0000-0000-000000000002"
+
+
 def test_listener_send_unknown_client_404(api):
     server, state = api
     status, body = request(
