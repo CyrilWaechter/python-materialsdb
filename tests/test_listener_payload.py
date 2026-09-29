@@ -192,6 +192,58 @@ def test_construction_payload_warns_when_thickness_unmatched(store):
     assert "materialsdb.org_layer" in material["psets"]
 
 
+def test_construction_warning_uses_payload_lang(store):
+    """The mismatch warning names the material in the payload's language, not
+    the global config language (config is pinned to fr by the fixture)."""
+    names = {"fr": "Isolant A", "de": "Daemmstoff A", "": "Material A"}
+
+    def fake_name(material, lang):
+        return names.get(lang or "", names[""])
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("materialsdb.utils.get_material_name", fake_name)
+        payload, problems = build_add_construction_payload(
+            store,
+            body={
+                "name": "w",
+                "layers": [{"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.15}],
+            },
+            lang="de",
+        )
+
+    assert problems == []
+    material = payload["construction"]["layers"][0]["material"]
+    assert material["name"] == "Daemmstoff A"
+    assert payload["construction"]["warnings"] == ["Daemmstoff A: design thickness 0.15 m matches no layer"]
+
+
+def test_construction_zero_layer_material_warns_and_has_no_psets(store):
+    # material 3 (Sans donnees C) has no layers at all
+    payload, problems = build_add_construction_payload(
+        store,
+        body={"name": "w", "layers": [{"material_id": "00000000-0000-0000-0000-000000000003", "thickness_m": 0.1}]},
+    )
+
+    assert problems == []
+    material = payload["construction"]["layers"][0]["material"]
+    assert "psets" not in material  # no crash, no invented psets
+    assert payload["construction"]["warnings"] == ["Sans donnees C: material has no layer"]
+
+
+def test_construction_single_layer_fallback_has_psets_and_no_warning(store):
+    # Beton B has exactly one layer (150 mm); a 300 mm design thickness still
+    # resolves to it without a warning (single-layer fallback).
+    payload, problems = build_add_construction_payload(
+        store,
+        body={"name": "w", "layers": [{"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.3}]},
+    )
+
+    assert problems == []
+    material = payload["construction"]["layers"][0]["material"]
+    assert material["psets"]["materialsdb.org_layer"]["layer_id"] == "00000000-0000-0000-0000-0000000000b1"
+    assert payload["construction"]["warnings"] == []
+
+
 def test_build_add_construction_reports_problems(store):
     from materialsdb.gui.listener import build_add_construction_payload
 

@@ -909,6 +909,56 @@ def test_listener_send_add_construction(api):
     assert body["payload"]["construction"]["types"] == ["IfcWallType"]
 
 
+def test_listener_send_add_construction_surfaces_warnings(api):
+    """Important 2: a construction whose design thickness matches no layer
+    yields a resolver warning that must reach the client, not just the summary."""
+    server, state = api
+    request(server, "POST", "/api/listener/register", payload={"client_id": "c1", "model_path": ""}, token=state.token)
+
+    status, body = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={
+            "client_id": "c1",
+            "action": "add_construction",
+            "construction": {
+                "name": "Warn wall",
+                "design_usage": "consDesignForWall",
+                # Isolant A has 200 mm and 100 mm layers; 0.15 m matches neither
+                "layers": [{"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.15}],
+            },
+        },
+        token=state.token,
+    )
+
+    assert status == 200
+    assert body["warnings"] == ["Isolant A: design thickness 0.15 m matches no layer"]
+
+    status, body = request(server, "GET", "/api/listener/poll?client_id=c1", token=state.token)
+    assert body["payload"]["construction"]["warnings"] == ["Isolant A: design thickness 0.15 m matches no layer"]
+
+
+def test_listener_send_add_materials_has_empty_warnings(api):
+    server, state = api
+    request(server, "POST", "/api/listener/register", payload={"client_id": "c1", "model_path": ""}, token=state.token)
+
+    status, body = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={
+            "client_id": "c1",
+            "action": "add_materials",
+            "items": [{"id": "00000000-0000-0000-0000-000000000001"}],
+        },
+        token=state.token,
+    )
+
+    assert status == 200
+    assert body["warnings"] == []
+
+
 def test_listener_send_add_construction_invalid(api):
     server, state = api
     request(server, "POST", "/api/listener/register", payload={"client_id": "c1", "model_path": ""}, token=state.token)

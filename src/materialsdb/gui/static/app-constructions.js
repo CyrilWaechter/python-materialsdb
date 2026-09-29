@@ -598,7 +598,8 @@ $("send-bonsai").onclick = async () => {
       },
     }),
   });
-  PickerCore.flash(setStatus, () => $("status").textContent, `sent to ${bonsaiTarget.label() || "?"}: ${result.summary}`);
+  const warning = (result.warnings || []).length ? ` \u2014 warning: ${result.warnings.join("; ")}` : "";
+  PickerCore.flash(setStatus, () => $("status").textContent, `sent to ${bonsaiTarget.label() || "?"}: ${result.summary}${warning}`);
 };
 $("export-ifc").onclick = async () => {
   try {

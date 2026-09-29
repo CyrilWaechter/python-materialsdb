@@ -39,3 +39,4 @@ def test_construction_page_add_layer_renders_rows():
     assert result.returncode == 0, result.stdout + result.stderr
     assert "data row present: true" in result.stdout
     assert "badge: true | name: true | no select: true" in result.stdout
+    assert "send warning: OK" in result.stdout

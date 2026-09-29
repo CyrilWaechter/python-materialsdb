@@ -84,6 +84,9 @@ async function fakeFetch(path, options = {}) {
   }
   if (path === "/api/constructions") return json({ constructions: [] });
   if (path === "/api/materials?type=construction") return json({ materials: [] });
+  if (path === "/api/listener/send") {
+    return json({ ok: true, queued: 1, summary: "construction 'Warn wall' (1 layer(s))", missing: [], warnings: ["Isolant A: design thickness 0.15 m matches no layer"] });
+  }
   throw new Error("unhandled fetch: " + path);
 }
 globalThis.fetch = fakeFetch;
@@ -102,7 +105,8 @@ const sandbox = { window: globalThis.window, document: globalThis.document, fetc
                   PickerCore: {
                     esc: (v) => String(v ?? ""),
                     categoryColorStyle: () => "#fff",
-                    startTargetPoll: () => ({ current: () => null, refresh: async () => {}, stop: () => {} }),
+                    startTargetPoll: () => ({ current: () => "c1", refresh: async () => {}, stop: () => {}, label: () => "Bonsai" }),
+                    flash: (setFn, _getFn, text) => setFn(text),
                   } };
 sandbox.globalThis = sandbox;
 sandbox.incomingFeed = incomingFeed;
@@ -205,5 +209,20 @@ if (!pencil || replaced[0]?.material_id !== "00000000-0000-0000-0000-00000000000
   process.exit(1);
 }
 console.log("replace: OK");
+
+// send to Bonsai: resolver warnings must show in the status message
+console.log("\n== send to Bonsai surfaces warnings ==");
+S.__evalInContext(`layers = [{ material_id: "00000000-0000-0000-0000-000000000001", thickness_m: 0.15 }];
+   document.getElementById("name").value = "Warn wall"; renderLayers();`);
+await S.__get("send-bonsai").onclick();
+await sleep(30);
+const sendStatus = S.__get("status").textContent;
+console.log(`status: ${JSON.stringify(sendStatus)}`);
+const sentOk = sendStatus.includes("sent to Bonsai") && sendStatus.includes("warning: Isolant A: design thickness 0.15 m matches no layer");
+if (!sentOk) {
+  console.log("BUG REPRODUCED: send-to-Bonsai warning not surfaced in status");
+  process.exit(1);
+}
+console.log("send warning: OK");
 
 console.log("OK");

@@ -92,7 +92,7 @@ def _layer_thick_m(layer, country) -> float | None:
     return thick / 1000 if thick is not None else None
 
 
-def _resolve_construction_layer(material, design_thickness_m, country) -> tuple[object | None, str | None]:
+def _resolve_construction_layer(material, design_thickness_m, country, lang) -> tuple[object | None, str | None]:
     """Map a construction layer's design thickness onto a materialsdb Layer.
 
     Exact thickness match wins; a single-layer material resolves to its only
@@ -100,14 +100,15 @@ def _resolve_construction_layer(material, design_thickness_m, country) -> tuple[
     the first layer with a warning. Returns (layer_or_None, warning_or_None)."""
     layers = list(utils.get_material_layers(material))
     if not layers:
-        return None, "no material layer"
+        name = str(utils.get_material_name(material, lang))
+        return None, f"{name}: material has no layer"
     for layer in layers:
         thick_m = _layer_thick_m(layer, country)
         if thick_m is not None and abs(thick_m - design_thickness_m) <= 1e-9:
             return layer, None
     if len(layers) == 1:
         return layers[0], None
-    name = str(utils.get_material_name(material, config.get_lang()))
+    name = str(utils.get_material_name(material, lang))
     return layers[0], f"{name}: design thickness {design_thickness_m} m matches no layer"
 
 
@@ -122,8 +123,9 @@ GENERIC_TYPES = ["IfcWallType", "IfcSlabType", "IfcRoofType"]
 def build_add_construction_payload(store_, body, country=None, lang=None):
     """Resolve a construction body into a self-sufficient add_construction
     payload (or (None, problems) when validation fails). Materials travel
-    minimal — identity/name/category/color, to_ifc_layer_set-style — and
-    find-or-create on the add-on side keys on the identity pset."""
+    resolved — identity/name/category/style plus their layer's materialsdb
+    psets — and find-or-create on the add-on side keys on
+    (material_id, org_layer layer_id)."""
     from materialsdb import construction as cm
 
     body = dict(body or {})
@@ -151,7 +153,7 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
         if summary is None or material is None:
             problems.append(f"unknown material id: {layer.material_id}")
             continue
-        resolved_layer, warning = _resolve_construction_layer(material, layer.thickness_m, country)
+        resolved_layer, warning = _resolve_construction_layer(material, layer.thickness_m, country, lang)
         if warning is not None:
             warnings.append(warning)
         color = getattr(material.information, "color", None)

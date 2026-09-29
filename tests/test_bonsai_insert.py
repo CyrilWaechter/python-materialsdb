@@ -436,9 +436,10 @@ def test_construction_writes_material_psets():
     assert props["thick"] == 0.2
 
 
-def test_construction_backfills_psets_on_reused_material():
-    """A reused material that lacks the org_layer pset (e.g. created by the
-    pre-fix add-on) gets it written once, not duplicated on re-push."""
+def test_construction_distinct_layer_creates_own_material():
+    """A material carrying only the identity pset (no org_layer, e.g. created
+    by the pre-fix add-on) is NOT reused for a resolved layer: the construction
+    layer must own its entity so it carries its own resolved layer id."""
     file = ifcopenshell.file(schema="IFC4")
     reused = ifcopenshell.api.run("material.add_material", file, name="Isolant A")
     identity = ifcopenshell.api.run("pset.add_pset", file, product=reused, name="materialsdb")
@@ -451,14 +452,139 @@ def test_construction_backfills_psets_on_reused_material():
 
     summary = apply_add_construction(file, CONSTRUCTION_PAYLOAD)
 
-    assert summary["materials_created"] == 1  # Beton B only; Isolant A reused
-    psets = ifcopenshell.util.element.get_psets(reused)
-    assert psets["materialsdb.org_layer"]["layer_id"] == "00000000-0000-0000-0000-0000000000a1"
+    # both construction layers create their own entity: the identity-only
+    # material has no matching (material_id, layer_id) key
+    assert summary["materials_created"] == 2
+    assert len(file.by_type("IfcMaterial")) == 3  # identity-only Isolant A + 2 created
 
     apply_add_construction(file, CONSTRUCTION_PAYLOAD)
 
-    org = [p for p in file.get_inverse(reused) if p.is_a("IfcMaterialProperties") and p.Name == "materialsdb.org_layer"]
-    assert len(org) == 1  # backfill is idempotent
+    created = [
+        m
+        for m in file.by_type("IfcMaterial")
+        if ifcopenshell.util.element.get_psets(m).get("materialsdb.org_layer", {}).get("layer_id")
+        == "00000000-0000-0000-0000-0000000000a1"
+    ]
+    assert len(created) == 1  # re-push is idempotent: own entity reused by layer key
+    org = [
+        p for p in file.get_inverse(created[0]) if p.is_a("IfcMaterialProperties") and p.Name == "materialsdb.org_layer"
+    ]
+    assert len(org) == 1
+
+
+def test_construction_two_thicknesses_of_same_material_get_distinct_materials():
+    """Failure mode 1: the same material used twice at different thicknesses
+    must yield two IfcMaterial entities, each carrying its own layer id (a
+    material_id-only key reused one entity and stamped the first layer's GUID)."""
+    file = ifcopenshell.file(schema="IFC4")
+    payload = _construction_payload(
+        layers=[
+            {
+                "material_id": "00000000-0000-0000-0000-000000000001",
+                "thickness_m": 0.2,
+                "material": {
+                    "source_id": "00000000-0000-0000-0000-000000000001",
+                    "name": "Isolant A",
+                    "category": "Insulation",
+                    "identity": {
+                        "material_id": "00000000-0000-0000-0000-000000000001",
+                        "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
+                        "company": "Mini SA",
+                    },
+                    "psets": {
+                        "materialsdb.org_layer": {
+                            "layer_id": "00000000-0000-0000-0000-0000000000a1",
+                            "thick": 0.2,
+                        }
+                    },
+                },
+            },
+            {
+                "material_id": "00000000-0000-0000-0000-000000000001",
+                "thickness_m": 0.1,
+                "material": {
+                    "source_id": "00000000-0000-0000-0000-000000000001",
+                    "name": "Isolant A",
+                    "category": "Insulation",
+                    "identity": {
+                        "material_id": "00000000-0000-0000-0000-000000000001",
+                        "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
+                        "company": "Mini SA",
+                    },
+                    "psets": {
+                        "materialsdb.org_layer": {
+                            "layer_id": "00000000-0000-0000-0000-0000000000a2",
+                            "thick": 0.1,
+                        }
+                    },
+                },
+            },
+        ]
+    )
+
+    summary = apply_add_construction(file, payload)
+
+    assert summary["materials_created"] == 2
+    by_layer = {}
+    for material in file.by_type("IfcMaterial"):
+        layer_id = ifcopenshell.util.element.get_psets(material).get("materialsdb.org_layer", {}).get("layer_id")
+        if layer_id is not None:
+            by_layer[layer_id] = material
+    assert set(by_layer) == {
+        "00000000-0000-0000-0000-0000000000a1",
+        "00000000-0000-0000-0000-0000000000a2",
+    }
+    assert by_layer["00000000-0000-0000-0000-0000000000a1"].id() != (
+        by_layer["00000000-0000-0000-0000-0000000000a2"].id()
+    )
+    assert len({m.id() for m in by_layer.values()}) == 2
+    layer_set = file.by_type("IfcWallType")[0].HasAssociations[0].RelatingMaterial
+    assert len(layer_set.MaterialLayers) == 2
+    assert len({layer.Material for layer in layer_set.MaterialLayers}) == 2
+
+
+def test_construction_reuses_picker_pushed_layer_by_full_key(store):
+    """Failure mode 2: a picker-pushed multi-layer material used in a
+    construction at the OTHER thickness must attach that picked layer's GUID,
+    not the first entity the material_id lookup returns."""
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_materials(file, _payload(store))  # Isolant A at 200 mm (a1) and 100 mm (a2)
+
+    payload = _construction_payload(
+        layers=[
+            {
+                "material_id": "00000000-0000-0000-0000-000000000001",
+                "thickness_m": 0.1,
+                "material": {
+                    "source_id": "00000000-0000-0000-0000-000000000001",
+                    "name": "Isolant A",
+                    "category": "Insulation",
+                    "identity": {
+                        "material_id": "00000000-0000-0000-0000-000000000001",
+                        "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
+                        "company": "Mini SA",
+                    },
+                    "psets": {
+                        "materialsdb.org_layer": {
+                            "layer_id": "00000000-0000-0000-0000-0000000000a2",
+                            "thick": 0.1,
+                        }
+                    },
+                },
+            }
+        ]
+    )
+
+    summary = apply_add_construction(file, payload)
+
+    assert summary["materials_created"] == 0  # a2 already present from the picker push
+    layer_set = file.by_type("IfcWallType")[0].HasAssociations[0].RelatingMaterial
+    attached = layer_set.MaterialLayers[0].Material
+    assert (
+        ifcopenshell.util.element.get_psets(attached).get("materialsdb.org_layer", {}).get("layer_id")
+        == "00000000-0000-0000-0000-0000000000a2"
+    )
+    assert len(file.by_type("IfcMaterial")) == 2  # no third entity, no wrong-GUID duplicate
 
 
 def test_construction_resend_updates_same_set():

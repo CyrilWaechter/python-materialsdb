@@ -252,6 +252,7 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             return
         action = str(payload.get("action") or "add_materials")
         missing = []
+        warnings = []
         if action == "add_materials":
             from materialsdb.gui.listener import build_add_materials_payload
 
@@ -270,6 +271,7 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 return
             queued = len(resolved["construction"]["layers"])
             summary = f"construction '{resolved['construction']['name']}' ({queued} layer(s))"
+            warnings = [str(w) for w in resolved["construction"].get("warnings") or []]
         else:
             self._send(400, {"error": f"unsupported action: {action}"})
             return
@@ -277,7 +279,7 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         # a fresh push invalidates the previous applied/error mark: the
         # dropdown shows a pending state until the add-on reports the new one
         listener["last_status"] = {"status": "pending", "detail": ""}
-        self._send(200, {"ok": True, "queued": queued, "summary": summary, "missing": missing})
+        self._send(200, {"ok": True, "queued": queued, "summary": summary, "missing": missing, "warnings": warnings})
 
     def _listener_status(self, payload):
         client_id = str(payload.get("client_id") or "")
