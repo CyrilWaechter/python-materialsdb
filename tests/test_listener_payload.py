@@ -163,7 +163,33 @@ def test_build_add_construction_payload_shape(store):
         "company_id": "A1B85A67-5B1E-4960-A297-2DE8275049C5",
         "company": "Mini SA",
     }
-    assert "psets" not in first  # minimal to_ifc_layer_set-style material
+    assert "psets" in first  # resolved psets now travel with the material
+
+
+def test_construction_payload_carries_resolved_psets(store):
+    payload, problems = build_add_construction_payload(
+        store,
+        body={"name": "w", "layers": [{"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.2}]},
+    )
+    assert problems == []
+    material = payload["construction"]["layers"][0]["material"]
+    org = material["psets"]["materialsdb.org_layer"]
+    assert org["layer_id"] == "00000000-0000-0000-0000-0000000000a1"  # the 200 mm layer
+    assert org["thick"] == 0.2
+    assert payload["construction"]["warnings"] == []
+
+
+def test_construction_payload_warns_when_thickness_unmatched(store):
+    # Isolant A has 200 mm and 100 mm layers; 0.15 m matches neither, and it has
+    # more than one layer -> best effort first layer + a warning.
+    payload, problems = build_add_construction_payload(
+        store,
+        body={"name": "w", "layers": [{"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.15}]},
+    )
+    assert problems == []
+    assert payload["construction"]["warnings"]
+    material = payload["construction"]["layers"][0]["material"]
+    assert "materialsdb.org_layer" in material["psets"]
 
 
 def test_build_add_construction_reports_problems(store):

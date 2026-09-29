@@ -86,6 +86,31 @@ def build_add_materials_payload(store_, items, country=None, lang=None):
     return {"action": "add_materials", "materials": materials}, missing
 
 
+def _layer_thick_m(layer, country) -> float | None:
+    """The layer's thickness in metres for `country`, or None when absent."""
+    thick = getattr(utils.get_by_country(layer.geometry or (), country), "thick", None)
+    return thick / 1000 if thick is not None else None
+
+
+def _resolve_construction_layer(material, design_thickness_m, country) -> tuple[object | None, str | None]:
+    """Map a construction layer's design thickness onto a materialsdb Layer.
+
+    Exact thickness match wins; a single-layer material resolves to its only
+    layer whatever the design thickness; multi-layer mismatches fall back to
+    the first layer with a warning. Returns (layer_or_None, warning_or_None)."""
+    layers = list(utils.get_material_layers(material))
+    if not layers:
+        return None, "no material layer"
+    for layer in layers:
+        thick_m = _layer_thick_m(layer, country)
+        if thick_m is not None and abs(thick_m - design_thickness_m) <= 1e-9:
+            return layer, None
+    if len(layers) == 1:
+        return layers[0], None
+    name = str(utils.get_material_name(material, config.get_lang()))
+    return layers[0], f"{name}: design thickness {design_thickness_m} m matches no layer"
+
+
 _DESIGN_USAGE_TO_TYPES = {
     "consDesignForWall": ["IfcWallType"],
     "consDesignForFloor": ["IfcSlabType"],
@@ -110,6 +135,7 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
     country = country or config.get_country()
     lang = lang or config.get_lang()
     layers = []
+    warnings = []
     for layer in construction.layers:
         if layer.placeholder is not None:
             layers.append(
@@ -125,28 +151,34 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
         if summary is None or material is None:
             problems.append(f"unknown material id: {layer.material_id}")
             continue
+        resolved_layer, warning = _resolve_construction_layer(material, layer.thickness_m, country)
+        if warning is not None:
+            warnings.append(warning)
         color = getattr(material.information, "color", None)
         color = int(color) if color else None
         category = str(getattr(material.information, "group", "") or "")
         style_name, style_rgb = style_for(color, category)
+        material_entry = {
+            "source_id": layer.material_id,
+            "name": str(utils.get_material_name(material, lang)),
+            "description": str(utils.get_material_description(material, lang)),
+            "category": category,
+            "color": color,
+            "style_name": style_name,
+            "style_color": [round(component, 6) for component in style_rgb],
+            "identity": {
+                "material_id": layer.material_id,
+                "company_id": str(summary.company_id or ""),
+                "company": str(summary.company or ""),
+            },
+        }
+        if resolved_layer is not None:
+            material_entry["psets"] = _resolved_psets(resolved_layer, country)
         layers.append(
             {
                 "material_id": layer.material_id,
                 "thickness_m": layer.thickness_m,
-                "material": {
-                    "source_id": layer.material_id,
-                    "name": str(utils.get_material_name(material, lang)),
-                    "description": str(utils.get_material_description(material, lang)),
-                    "category": category,
-                    "color": color,
-                    "style_name": style_name,
-                    "style_color": [round(component, 6) for component in style_rgb],
-                    "identity": {
-                        "material_id": layer.material_id,
-                        "company_id": str(summary.company_id or ""),
-                        "company": str(summary.company or ""),
-                    },
-                },
+                "material": material_entry,
             }
         )
     if problems:
@@ -162,5 +194,6 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
                 cls: u for cls, u in cm.u_values_by_type(construction, store_, types).items() if u is not None
             },
             "layers": layers,
+            "warnings": warnings,
         },
     }, []
