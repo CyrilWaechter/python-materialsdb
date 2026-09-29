@@ -151,34 +151,50 @@ def _lambda_value(entry) -> float | None:
     return thermal.get("lambda_value_dry")
 
 
-def _change_report(store_, model_path, material_id) -> tuple[list[dict], bool]:
+def _change_report(store_, model_path, material_id, model_layers, mapping) -> tuple[list[dict], bool]:
     """Old → new schedule of the fields that changed since the push snapshot.
 
-    Returns ``(report, has_snapshot)``; ``([], False)`` when nothing was pushed."""
+    Snapshots are keyed by the *model* layer id recorded at push time, which may
+    have been re-keyed upstream; pair each model layer to its matched current
+    store layer via ``mapping`` (model layer id → new layer id). Returns
+    ``(report, has_snapshot)``; ``([], False)`` when nothing was pushed."""
     from materialsdb.gui.listener import build_add_materials_payload
 
     payload, _missing = build_add_materials_payload(store_, [{"id": material_id}])
+    entries = payload["materials"]
+    by_layer = {str(entry.get("layer_id") or ""): entry for entry in entries}
+    fallback_entry = entries[0] if entries else None
     report: list[dict] = []
     has_snapshot = False
     scalars_done: set[str] = set()
-    for entry in payload["materials"]:
-        layer_id = str(entry.get("layer_id") or "")
-        snapshot = store_.get_pushed_material(model_path, material_id, layer_id or None)
+    for model_layer in model_layers:
+        model_layer_id = str(model_layer.get("layer_id") or "")
+        snapshot = store_.get_pushed_material(model_path, material_id, model_layer_id or None)
         if snapshot is None:
             continue
         has_snapshot = True
+        new_layer_id = mapping.get(model_layer_id)
+        paired_entry = by_layer.get(new_layer_id) if new_layer_id is not None else None
+        # a model layer with no matched current layer can still surface the
+        # material-level scalar changes against any current entry
+        comparison_entry = paired_entry if paired_entry is not None else fallback_entry
+        if comparison_entry is None:
+            continue
         for field in _SCALAR_REPORT_FIELDS:
             if field in scalars_done:
                 continue
-            old, new = snapshot.get(field), entry.get(field)
+            old, new = snapshot.get(field), comparison_entry.get(field)
             if old != new:
                 report.append({"field": field, "old": old, "new": new})
             scalars_done.add(field)
+        if paired_entry is None:
+            # thickness/lambda can only be compared against a matched layer
+            continue
         old_thick = (snapshot.get("layer") or {}).get("thick_m")
-        new_thick = (entry.get("layer") or {}).get("thick_m")
+        new_thick = (paired_entry.get("layer") or {}).get("thick_m")
         if old_thick != new_thick:
             report.append({"field": "thickness", "old": old_thick, "new": new_thick})
-        old_lambda, new_lambda = _lambda_value(snapshot), _lambda_value(entry)
+        old_lambda, new_lambda = _lambda_value(snapshot), _lambda_value(paired_entry)
         if old_lambda != new_lambda:
             report.append({"field": "lambda", "old": old_lambda, "new": new_lambda})
     return report, has_snapshot
@@ -501,11 +517,15 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         for material_id, entry in model.items():
             status = _status_from_entry(store_, entry, material_id)
             if status == _CHANGED:
-                report, has_snapshot = _change_report(store_, model_path, material_id)
+                model_layers = entry.get("layers") or []
+                matching = _match_layers(store_, material_id, model_layers)
+                report, has_snapshot = _change_report(
+                    store_, model_path, material_id, model_layers, matching["mapping"]
+                )
                 changed.append(
                     {
                         "material_id": material_id,
-                        "matching": _match_layers(store_, material_id, entry.get("layers") or []),
+                        "matching": matching,
                         "report": report,
                         "has_snapshot": has_snapshot,
                     }

@@ -1304,6 +1304,80 @@ def test_model_changes_no_snapshot_report_empty(api):
     assert body["changed"][0]["has_snapshot"] is False
 
 
+def test_model_changes_report_pairs_rekeyed_snapshot_layer(api):
+    """The snapshot is keyed by the model layer id, which upstream may have
+    re-keyed; a same-thickness layer match must still yield the report."""
+    from materialsdb.gui.listener import build_add_materials_payload
+
+    server, state = api
+    store_ = state.resolve_store()
+    path = "/m/rekeyed.ifc"
+    old_layer_id = "00000000-0000-0000-0000-00000000dead"
+    _ingest_model(
+        server,
+        state,
+        path,
+        {
+            M2: {
+                "fingerprint": "stale",
+                "scheme": "materialsdb-fp/1",
+                "layers": [{"layer_id": old_layer_id, "thick": 0.15}],
+            }
+        },
+    )
+
+    payload, _missing = build_add_materials_payload(store_, [{"id": M2}])
+    snapshot = dict(payload["materials"][0])
+    snapshot["layer_id"] = old_layer_id  # pushed under the now-stale model layer id
+    snapshot["name"] = "Old B"
+    store_.record_pushed_materials(path, [snapshot])
+
+    status, body = request(server, "GET", "/api/model/changes")
+    assert status == 200
+    assert body["counts"]["changed"] == 1
+    item = body["changed"][0]
+    assert item["matching"]["state"] == "updatable"
+    assert item["matching"]["mapping"] == {old_layer_id: L2B}
+    assert item["has_snapshot"] is True
+    assert {"field": "name", "old": "Old B", "new": "Beton B"} in item["report"]
+
+
+def test_model_changes_report_unmatched_layer_still_shows_scalars(api):
+    """A model layer that matches no current layer still contributes the
+    material-level scalar differences and marks the snapshot present."""
+    from materialsdb.gui.listener import build_add_materials_payload
+
+    server, state = api
+    store_ = state.resolve_store()
+    path = "/m/unmatched.ifc"
+    old_layer_id = "00000000-0000-0000-0000-00000000beef"
+    _ingest_model(
+        server,
+        state,
+        path,
+        {
+            M1: {
+                "fingerprint": "stale",
+                "scheme": "materialsdb-fp/1",
+                "layers": [{"layer_id": old_layer_id, "thick": 0.999}],
+            }
+        },
+    )
+
+    payload, _missing = build_add_materials_payload(store_, [{"id": M1}])
+    snapshot = dict(payload["materials"][0])
+    snapshot["layer_id"] = old_layer_id
+    snapshot["name"] = "Old A"
+    store_.record_pushed_materials(path, [snapshot])
+
+    status, body = request(server, "GET", "/api/model/changes")
+    assert status == 200
+    item = body["changed"][0]
+    assert item["matching"]["state"] == "unmatched"
+    assert item["has_snapshot"] is True
+    assert {"field": "name", "old": "Old A", "new": "Isolant A"} in item["report"]
+
+
 def test_model_changes_no_listener_serves_cached_seen_at(api):
     server, state = api
     store_ = state.resolve_store()
