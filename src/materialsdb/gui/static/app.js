@@ -31,6 +31,7 @@ let lastSelectedId = null;
 let modelChanges = null;
 const modelChoices = new Map();   // materialId -> {mode, candidates, update, replaces}
 let pendingReplace = null;        // changed material awaiting a replacement pick
+let openReportId = null;          // material whose change report is currently shown
 if (isEmbed) {
   const _buildItems = () => {
     const items = [];
@@ -265,9 +266,12 @@ async function applyModel() {
     tr.addEventListener("click", (event) => {
       if (event.target.tagName === "INPUT") return;
       if (event.target.closest && event.target.closest("[data-model-action]")) return;
+      if (pendingReplace && pendingReplace !== m.id && !checkbox.checked) {
+        checkbox.checked = true;   // picking this row IS the replacement choice
+        checkbox.onchange();
+      }
       document.querySelectorAll("tr.selected").forEach((el) => el.classList.remove("selected"));
       tr.classList.add("selected");
-      if (pendingReplace && pendingReplace !== m.id) applyReplace(pendingReplace, m.id);
       showDetail(m.id);
     });
     rowsEl.appendChild(tr);
@@ -472,6 +476,7 @@ function renderModelChanges(data) {
     }
   }
   applyModel();
+  if (openReportId) openChangeReport(openReportId);
 }
 
 async function refreshModelChanges() {
@@ -482,20 +487,25 @@ async function refreshModelChanges() {
   }
 }
 
-function candidateOption(candidate) {
+function candidateOption(candidate, chosenId) {
   const id = typeof candidate === "string" ? candidate : String(candidate.layer_id ?? candidate.id ?? "");
   const thick = typeof candidate === "object" ? (candidate.thick ?? candidate.thickness) : null;
   const label = thick !== null && thick !== undefined ? `${Math.round(Number(thick) * 1000)} mm` : shortId(id);
-  return `<option value="${esc(id)}">${esc(label)}</option>`;
+  const selected = chosenId !== undefined && chosenId !== null && String(chosenId) === id ? " selected" : "";
+  return `<option value="${esc(id)}"${selected}>${esc(label)}</option>`;
 }
 
 function chooseLayerMapping(materialId) {
   const item = changedItem(materialId);
-  const candidates = (item && item.matching && item.matching.candidates) || {};
+  const matching = (item && item.matching) || {};
+  // Candidate selects only apply to genuinely ambiguous layers.
+  if (matching.state !== "ambiguous") return "";
+  const candidates = matching.candidates || {};
+  const chosen = (modelChoices.get(materialId) || {}).candidates || {};
   const layers = Object.entries(candidates);
   if (!layers.length) return "";
   const selects = layers.map(([modelLayerId, list]) => {
-    const options = (list || []).map(candidateOption).join("");
+    const options = (list || []).map((candidate) => candidateOption(candidate, chosen[modelLayerId])).join("");
     return `<label class="model-layer-map" style="display:block">${esc(shortId(modelLayerId))} \u2192 ` +
       `<select data-model-layer="${esc(modelLayerId)}" data-id="${esc(materialId)}">${options}</select></label>`;
   }).join("");
@@ -507,10 +517,12 @@ function openChangeReport(materialId) {
   if (!box) return;
   const item = changedItem(materialId);
   if (!item) {
+    openReportId = null;
     box.innerHTML = "";
     box.style.display = "none";
     return;
   }
+  openReportId = materialId;
   box.style.display = "block";
   const matching = item.matching || {};
   const choice = modelChoices.get(materialId) || {};
@@ -562,13 +574,17 @@ function applyReplace(oldId, newId) {
   choice.mode = "replace";
   choice.replaces = { material_id: oldId };
   modelChoices.set(newId, choice);
+  layerSelections.delete(newId);   // a replacement is always a whole material
+  selected.add(newId);             // ...and must travel in the send payload
   pendingReplace = null;
   setStatus(`${shortId(newId)} will replace changed ${shortId(oldId)}`);
 }
 
 function sendSelected() {
   /* collectItems union enriched with the per-material model-change choice:
-   * `update` carries the resolved layer mapping plus any user-picked candidates. */
+   * `update` carries the resolved layer mapping plus any user-picked candidates
+   * (the latest candidate picks win over the mapping captured when Update was
+   * chosen). */
   const items = PickerCore.collectItems(selected, layerSelections);
   for (const item of items) {
     const choice = modelChoices.get(item.id);
@@ -577,7 +593,7 @@ function sendSelected() {
     if (choice.mode === "update") {
       const current = changedItem(item.id);
       const mapping = (current && current.matching && current.matching.mapping) || {};
-      item.update = { ...mapping, ...(choice.candidates || {}), ...(choice.update || {}) };
+      item.update = { ...mapping, ...(choice.update || {}), ...(choice.candidates || {}) };
     } else if (choice.mode === "replace" && choice.replaces) {
       item.replaces = choice.replaces;
     }

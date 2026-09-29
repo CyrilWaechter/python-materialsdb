@@ -9,6 +9,8 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const M1 = "00000000-0000-0000-0000-000000000001";
+const M2 = "00000000-0000-0000-0000-000000000002";
+const M3 = "00000000-0000-0000-0000-000000000003";
 const MODEL_LAYER = "00000000-0000-0000-0000-0000000000a1";
 const NEW_LAYER = "00000000-0000-0000-0000-0000000000b1";
 
@@ -99,8 +101,7 @@ async function fakeFetch(path, options = {}) {
   const jsonHeaders = { "Content-Type": "application/json" };
   const json = (data) => new Response(JSON.stringify(data), { headers: jsonHeaders });
   if (path === "/api/config") return json({ lang: "en", country: "CH" });
-  if (path.startsWith("/api/materials?")) {
-    return json({
+  if (path.startsWith("/api/materials?")) {    return json({
       materials: [
         {
           id: M1,
@@ -115,11 +116,57 @@ async function fakeFetch(path, options = {}) {
           usage: { wall: true },
           model: "changed",
         },
+        {
+          id: M2,
+          display_name: "Beton B",
+          company: "Acme",
+          category: "Concrete",
+          type: "simple",
+          lambda_min: 0.21,
+          lambda_max: 0.21,
+          thick_min: 150,
+          thick_max: 150,
+          usage: { wall: true },
+          model: "current",
+        },
+        {
+          id: M3,
+          display_name: "Brique C",
+          company: "Acme",
+          category: "Masonry",
+          type: "simple",
+          lambda_min: 0.5,
+          lambda_max: 0.5,
+          thick_min: 100,
+          thick_max: 100,
+          usage: { wall: true },
+          model: "current",
+        },
       ],
     });
   }
   if (path === "/api/model/changes") return json(changesData);
   if (path === "/api/updates") return json({ updates_available: false });
+  if (path.startsWith("/api/materials/")) {
+    const id = decodeURIComponent(path.split("/").pop());
+    return json({
+      id,
+      names: { en: id === M2 ? "Beton B" : "Isolant A" },
+      descriptions: {},
+      company: "Acme",
+      company_id: "c1",
+      category: "Insulation",
+      type: "simple",
+      lambda_min: null,
+      lambda_max: null,
+      thick_min: null,
+      thick_max: null,
+      u_value_without: null,
+      consref: null,
+      designusage: null,
+      layers: [],
+    });
+  }
   if (path === "/api/listener/clients") {
     return json({ clients: [{ client_id: "c1", model_path: "/m/wall.ifc", last_status: { status: "applied" } }] });
   }
@@ -214,6 +261,7 @@ check(
   `html=${report.innerHTML}`,
 );
 check("report offers Update for an updatable material", /data-model-action="update"/.test(report.innerHTML), `html=${report.innerHTML}`);
+check("updatable report renders no candidate select", !/<select[^>]*data-model-layer=/.test(report.innerHTML), `html=${report.innerHTML}`);
 
 // (b) choose Update -> send payload ------------------------------
 const checkbox = tr.getElementsByTagName("input")[0];
@@ -263,6 +311,11 @@ check(
   /1 changed in model/.test(bannerText2) && /1 missing/.test(bannerText2) && /1 legacy/.test(bannerText2),
   JSON.stringify(bannerText2),
 );
+check(
+  "an open report re-renders when model changes refresh",
+  /details unavailable/.test(report.innerHTML),
+  `html=${report.innerHTML}`,
+);
 S.__openChangeReport(M1);
 check(
   "ambiguous layers render a select per model layer",
@@ -272,6 +325,83 @@ check(
 check("Replace is offered for an ambiguous material", /data-model-action="replace"/.test(report.innerHTML), `html=${report.innerHTML}`);
 check("Update is not offered for an ambiguous material", !/data-model-action="update"/.test(report.innerHTML), `html=${report.innerHTML}`);
 check("missing snapshot shows details unavailable", /details unavailable/.test(report.innerHTML), `html=${report.innerHTML}`);
+
+// (Minor 4) candidate selects reflect the current choice -------------
+const candidateChange = { dataset: { modelLayer: MODEL_LAYER, id: M1 }, value: NEW_LAYER };
+report.dispatch("change", { target: candidateChange });
+S.__openChangeReport(M1);
+check(
+  "chosen candidate is marked selected",
+  new RegExp(`value="${NEW_LAYER}" selected`).test(report.innerHTML),
+  `html=${report.innerHTML}`,
+);
+
+// (Important 1/2) row-click replacement is selected and sent --------
+const replaceButton = { dataset: { modelAction: "replace", id: M1 } };
+replaceButton.closest = () => replaceButton;
+report.dispatch("click", { target: replaceButton });
+await sleep(20); // applyModel re-render after renderModelChanges
+const tr2 = rows.children.find((child) => child.dataset.id === M2);
+tr2.dispatch("click", { target: { tagName: "TD", closest: () => null } });
+await sleep(20);
+const afterRowClick = S.__sendSelected();
+const rowRep = afterRowClick.find((item) => item.id === M2);
+check("row-click replacement is included in the send payload", !!rowRep, JSON.stringify(afterRowClick));
+check("row-click replacement carries mode:replace", rowRep && rowRep.mode === "replace", JSON.stringify(rowRep));
+check(
+  "row-click replacement carries replaces.material_id",
+  rowRep && rowRep.replaces && rowRep.replaces.material_id === M1,
+  JSON.stringify(rowRep),
+);
+check("replaced material drops its update choice", !S.__modelChoices().has(M1), JSON.stringify([...S.__modelChoices()]));
+await S.__get("send-bonsai").onclick();
+const postedRow = sentPayloads[sentPayloads.length - 1];
+const postedRowRep = postedRow && postedRow.items.find((item) => item.id === M2);
+check(
+  "POSTed payload carries the row-click replacement",
+  postedRowRep && postedRowRep.mode === "replace" && postedRowRep.replaces.material_id === M1,
+  JSON.stringify(postedRow),
+);
+
+// (Important 1) checkbox replacement path also sends ----------------
+S.__openChangeReport(M1);
+const replaceButton2 = { dataset: { modelAction: "replace", id: M1 } };
+replaceButton2.closest = () => replaceButton2;
+report.dispatch("click", { target: replaceButton2 });
+const tr3 = rows.children.find((child) => child.dataset.id === M3);
+const cb3 = tr3.getElementsByTagName("input")[0];
+cb3.checked = true;
+cb3.onchange();
+const afterCheckbox = S.__sendSelected();
+const cbRep = afterCheckbox.find((item) => item.id === M3);
+check("checkbox replacement carries mode:replace", cbRep && cbRep.mode === "replace", JSON.stringify(cbRep));
+check(
+  "checkbox replacement carries replaces.material_id",
+  cbRep && cbRep.replaces && cbRep.replaces.material_id === M1,
+  JSON.stringify(cbRep),
+);
+
+// (Minor 3) a candidate picked after Update wins over the stale mapping
+S.__renderModelChanges({
+  ...changesData,
+  changed: [
+    {
+      material_id: M1,
+      matching: { state: "updatable", mapping: { [MODEL_LAYER]: NEW_LAYER }, candidates: {} },
+      report: [],
+      has_snapshot: true,
+    },
+  ],
+});
+S.__setModelMode(M1, "update");
+const candidateChange2 = { dataset: { modelLayer: MODEL_LAYER, id: M1 }, value: "layer-c" };
+report.dispatch("change", { target: candidateChange2 });
+const merged = S.__sendSelected().find((item) => item.id === M1);
+check(
+  "latest candidate wins over the mapping captured at Update",
+  merged && merged.update && merged.update[MODEL_LAYER] === "layer-c",
+  JSON.stringify(merged && merged.update),
+);
 
 if (failures.length) {
   console.log(`MODEL-CHANGES FAILED (${failures.length}): ${failures.join(", ")}`);
