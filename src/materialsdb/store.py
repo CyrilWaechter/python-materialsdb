@@ -17,6 +17,8 @@ Report = namedtuple("Report", ["existing", "updated", "deleted", "skipped", "dup
 
 SCHEMA_VERSION = "3"
 
+FINGERPRINT_SCHEME = "materialsdb-fp/1"
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS materials (
     id TEXT PRIMARY KEY, company_id TEXT, company TEXT, category TEXT, mtype TEXT,
@@ -29,6 +31,12 @@ CREATE INDEX IF NOT EXISTS idx_lambda ON materials(lambda_min);
 CREATE TABLE IF NOT EXISTS producer_files (
     path TEXT PRIMARY KEY, sha256 TEXT, built_at REAL, ver INTEGER, crd REAL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS model_materials (
+    model_path TEXT, material_id TEXT, fingerprint TEXT, scheme TEXT, layers TEXT,
+    seen_at REAL, PRIMARY KEY(model_path, material_id));
+CREATE TABLE IF NOT EXISTS pushed_materials (
+    model_path TEXT, material_id TEXT, layer_id TEXT, snapshot TEXT, pushed_at REAL,
+    PRIMARY KEY(model_path, material_id, layer_id));
 """
 
 _MATERIAL_COLUMNS = (
@@ -291,3 +299,74 @@ class MaterialStore:
         if row is None:
             return None
         return self._row_to_summary(row)
+
+    # ---------- fingerprints / model map / push snapshots ----------
+
+    def material_fingerprint(self, material_id: str) -> str | None:
+        row = self.connection.execute("SELECT xml FROM materials WHERE id=?", (material_id,)).fetchone()
+        if row is None:
+            return None
+        return hashlib.sha256(bytes(row[0])).hexdigest()
+
+    def set_model_materials(self, model_path: str, materials: dict[str, dict]) -> None:
+        """Replace the stored material map for one model path (replace-all)."""
+        self.connection.execute("DELETE FROM model_materials WHERE model_path=?", (model_path,))
+        seen_at = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        for material_id, info in materials.items():
+            self.connection.execute(
+                "INSERT INTO model_materials(model_path, material_id, fingerprint, scheme, layers, seen_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    model_path,
+                    material_id,
+                    info.get("fingerprint"),
+                    info.get("scheme"),
+                    json.dumps(info.get("layers", [])),
+                    seen_at,
+                ),
+            )
+        self.connection.commit()
+
+    def get_model_materials(self, model_path: str) -> dict[str, dict]:
+        rows = self.connection.execute(
+            "SELECT material_id, fingerprint, scheme, layers FROM model_materials WHERE model_path=?",
+            (model_path,),
+        ).fetchall()
+        return {
+            material_id: {
+                "fingerprint": fingerprint,
+                "scheme": scheme,
+                "layers": json.loads(layers) if layers is not None else [],
+            }
+            for material_id, fingerprint, scheme, layers in rows
+        }
+
+    def model_seen_at(self, model_path: str) -> float | None:
+        row = self.connection.execute(
+            "SELECT MAX(seen_at) FROM model_materials WHERE model_path=?", (model_path,)
+        ).fetchone()
+        return row[0] if row and row[0] is not None else None
+
+    def record_pushed_materials(self, model_path: str, entries: list[dict]) -> None:
+        """Upsert the pushed-material snapshots for one model, keyed by material and layer."""
+        pushed_at = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        for entry in entries:
+            material_id = entry["identity"]["material_id"]
+            layer_id = entry.get("layer_id") or ""
+            self.connection.execute(
+                "INSERT INTO pushed_materials(model_path, material_id, layer_id, snapshot, pushed_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(model_path, material_id, layer_id) DO UPDATE SET "
+                "snapshot=excluded.snapshot, pushed_at=excluded.pushed_at",
+                (model_path, material_id, layer_id, json.dumps(entry), pushed_at),
+            )
+        self.connection.commit()
+
+    def get_pushed_material(self, model_path: str, material_id: str, layer_id: str | None = None) -> dict | None:
+        row = self.connection.execute(
+            "SELECT snapshot FROM pushed_materials WHERE model_path=? AND material_id=? AND layer_id=?",
+            (model_path, material_id, layer_id or ""),
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row[0])

@@ -193,3 +193,87 @@ def test_producer_files_stores_ver_crd(tmp_path, mini_xml):
         assert isinstance(row[1], float)
     finally:
         s.close()
+
+
+def test_fingerprint_scheme_constant():
+    from materialsdb.store import FINGERPRINT_SCHEME
+
+    assert FINGERPRINT_SCHEME == "materialsdb-fp/1"
+
+
+def test_material_fingerprint_is_stable_and_changes(mini_xml, tmp_path):
+    store = MaterialStore(db_path=tmp_path / "fp.db")
+    try:
+        store.refresh(paths=[mini_xml])
+        mid = "00000000-0000-0000-0000-000000000001"
+        first = store.material_fingerprint(mid)
+        assert first and len(first) == 64
+        store.refresh(paths=[mini_xml])  # unchanged file
+        assert store.material_fingerprint(mid) == first
+        assert store.material_fingerprint("nope") is None
+    finally:
+        store.close()
+
+
+def test_material_fingerprint_changes_when_xml_changes(mini_xml, tmp_path):
+    store = MaterialStore(db_path=tmp_path / "fpc.db")
+    try:
+        store.refresh(paths=[mini_xml])
+        mid = "00000000-0000-0000-0000-000000000001"
+        first = store.material_fingerprint(mid)
+        changed = tmp_path / "changed.xml"
+        changed.write_text(mini_xml.read_text(encoding="utf-8").replace("0.036", "0.03"), encoding="utf-8")
+        store.refresh(paths=[changed])
+        assert store.material_fingerprint(mid) != first
+    finally:
+        store.close()
+
+
+def test_model_materials_roundtrip(tmp_path):
+    store = MaterialStore(db_path=tmp_path / "m.db")
+    try:
+        store.set_model_materials(
+            "/m/a.ifc",
+            {"ID1": {"fingerprint": "f", "scheme": "s", "layers": [{"layer_id": "L1", "thick": 0.2}]}},
+        )
+        got = store.get_model_materials("/m/a.ifc")
+        assert got == {"ID1": {"fingerprint": "f", "scheme": "s", "layers": [{"layer_id": "L1", "thick": 0.2}]}}
+        assert store.model_seen_at("/m/a.ifc") is not None
+        store.set_model_materials("/m/a.ifc", {})  # replace-all
+        assert store.get_model_materials("/m/a.ifc") == {}
+    finally:
+        store.close()
+
+
+def test_model_materials_absent_path(tmp_path):
+    store = MaterialStore(db_path=tmp_path / "m2.db")
+    try:
+        assert store.get_model_materials("/m/missing.ifc") == {}
+        assert store.model_seen_at("/m/missing.ifc") is None
+    finally:
+        store.close()
+
+
+def test_pushed_materials_roundtrip(tmp_path):
+    store = MaterialStore(db_path=tmp_path / "p.db")
+    try:
+        entry = {"identity": {"material_id": "ID1"}, "layer_id": "L1", "name": "N"}
+        store.record_pushed_materials("/m/a.ifc", [entry])
+        assert store.get_pushed_material("/m/a.ifc", "ID1", "L1") == entry
+        assert store.get_pushed_material("/m/a.ifc", "ID1", "L2") is None
+    finally:
+        store.close()
+
+
+def test_pushed_materials_upsert_and_default_layer(tmp_path):
+    store = MaterialStore(db_path=tmp_path / "p2.db")
+    try:
+        first = {"identity": {"material_id": "ID1"}, "name": "old"}
+        second = {"identity": {"material_id": "ID1"}, "name": "new"}
+        store.record_pushed_materials("/m/a.ifc", [first])
+        store.record_pushed_materials("/m/a.ifc", [second])
+        assert store.get_pushed_material("/m/a.ifc", "ID1") == second
+        assert store.get_pushed_material("/m/a.ifc", "ID1", "") == second
+        assert store.get_pushed_material("/m/a.ifc", "ID1", "L1") is None
+    finally:
+        store.close()
