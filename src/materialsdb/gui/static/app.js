@@ -266,9 +266,15 @@ async function applyModel() {
     tr.addEventListener("click", (event) => {
       if (event.target.tagName === "INPUT") return;
       if (event.target.closest && event.target.closest("[data-model-action]")) return;
-      if (pendingReplace && pendingReplace !== m.id && !checkbox.checked) {
-        checkbox.checked = true;   // picking this row IS the replacement choice
-        checkbox.onchange();
+      if (pendingReplace && pendingReplace !== m.id) {
+        // clicking any other row IS the replacement choice; when this row is
+        // already checked the change event will not fire, so apply directly
+        if (!checkbox.checked) {
+          checkbox.checked = true;
+          checkbox.onchange();
+        } else {
+          applyReplace(pendingReplace, m.id);
+        }
       }
       document.querySelectorAll("tr.selected").forEach((el) => el.classList.remove("selected"));
       tr.classList.add("selected");

@@ -381,6 +381,28 @@ check(
   JSON.stringify(cbRep),
 );
 
+// (Minor 6) an already-checked replacement row still applies the replacement
+S.__renderModelChanges(changesData);
+S.__setModelMode(M3, "skip");      // clear the choice left by the previous step
+S.__openChangeReport(M1);
+const tr4 = rows.children.find((child) => child.dataset.id === M3);
+const cb4 = tr4.getElementsByTagName("input")[0];
+cb4.checked = false;
+cb4.onchange();                    // unselect so only the row click can add it back
+const replaceButton3 = { dataset: { modelAction: "replace", id: M1 } };
+replaceButton3.closest = () => replaceButton3;
+report.dispatch("click", { target: replaceButton3 });
+cb4.checked = true;                // already picked before the row click; no change event
+const afterPrechecked = [];
+tr4.dispatch("click", { target: { tagName: "TD", closest: () => null } });
+afterPrechecked.push(...S.__sendSelected().filter((item) => item.id === M3));
+check(
+  "clicking an already-checked row applies the replacement",
+  afterPrechecked[0] && afterPrechecked[0].mode === "replace" &&
+    afterPrechecked[0].replaces && afterPrechecked[0].replaces.material_id === M1,
+  JSON.stringify(afterPrechecked),
+);
+
 // (Minor 3) a candidate picked after Update wins over the stale mapping
 S.__renderModelChanges({
   ...changesData,

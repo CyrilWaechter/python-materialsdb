@@ -46,6 +46,7 @@ def build_add_materials_payload(store_, items, country=None, lang=None):
         if summary is None or material is None:
             missing.append(material_id)
             continue
+        fingerprint = store_.material_fingerprint(material_id)
         wanted = {str(g) for g in item.get("layer_ids") or []} or None
         name = str(utils.get_material_name(material, lang))
         description = str(utils.get_material_description(material, lang))
@@ -75,7 +76,7 @@ def build_add_materials_payload(store_, items, country=None, lang=None):
                         "material_id": material_id,
                         "company_id": str(summary.company_id or ""),
                         "company": str(summary.company or ""),
-                        "fingerprint": store_.material_fingerprint(material_id),
+                        "fingerprint": fingerprint,
                         "fingerprint_scheme": FINGERPRINT_SCHEME,
                     },
                     "mode": item.get("mode", "skip"),
@@ -118,6 +119,29 @@ def _resolve_construction_layer(material, design_thickness_m, country, lang) -> 
     return layers[0], f"{name}: design thickness {design_thickness_m} m matches no layer"
 
 
+def _raw_decision_layer(raw_layers, material_id, thickness_m) -> dict:
+    """The raw body layer carrying the decision for this validated layer.
+
+    ``validate_construction`` can drop or reorder malformed layers, so the
+    validated index does not address ``raw_layers``. Match on the pair
+    (material_id, thickness) instead; when no exact match is unambiguous the
+    decision fields are omitted, i.e. the layer is treated as ``skip`` rather
+    than inheriting another layer's mode/update/replaces."""
+    matches = []
+    for raw in raw_layers:
+        if not isinstance(raw, dict):
+            continue
+        if str(raw.get("material_id")) != str(material_id):
+            continue
+        try:
+            raw_thickness = float(raw.get("thickness_m"))
+        except (TypeError, ValueError):
+            continue
+        if abs(raw_thickness - thickness_m) <= 1e-9:
+            matches.append(raw)
+    return matches[0] if len(matches) == 1 else {}
+
+
 _DESIGN_USAGE_TO_TYPES = {
     "consDesignForWall": ["IfcWallType"],
     "consDesignForFloor": ["IfcSlabType"],
@@ -147,7 +171,7 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
         raw_layers = body["layers"]
     layers = []
     warnings = []
-    for index, layer in enumerate(construction.layers):
+    for layer in construction.layers:
         if layer.placeholder is not None:
             layers.append(
                 {
@@ -165,7 +189,7 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
         resolved_layer, warning = _resolve_construction_layer(material, layer.thickness_m, country, lang)
         if warning is not None:
             warnings.append(warning)
-        raw_layer = raw_layers[index] if index < len(raw_layers) else {}
+        raw_layer = _raw_decision_layer(raw_layers, layer.material_id, layer.thickness_m)
         color = getattr(material.information, "color", None)
         color = int(color) if color else None
         category = str(getattr(material.information, "group", "") or "")

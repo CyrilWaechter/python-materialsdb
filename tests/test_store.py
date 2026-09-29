@@ -277,3 +277,28 @@ def test_pushed_materials_upsert_and_default_layer(tmp_path):
         assert store.get_pushed_material("/m/a.ifc", "ID1", "L1") is None
     finally:
         store.close()
+
+
+def test_pushed_materials_keys_construction_entry_by_pset_layer(tmp_path):
+    """A construction entry carries the layer id only under the org_layer pset;
+    keying it by "" hid the snapshot from per-layer change reports."""
+    store = MaterialStore(db_path=tmp_path / "p3.db")
+    try:
+        entry = {
+            "identity": {"material_id": "ID1"},
+            "psets": {"materialsdb.org_layer": {"layer_id": "L1", "thick": 0.2}},
+        }
+        store.record_pushed_materials("/m/a.ifc", [entry])
+        assert store.get_pushed_material("/m/a.ifc", "ID1", "L1") == entry
+        assert store.get_pushed_material("/m/a.ifc", "ID1", "") is None
+    finally:
+        store.close()
+
+
+def test_pushed_materials_skips_entry_without_material_id(tmp_path):
+    store = MaterialStore(db_path=tmp_path / "p4.db")
+    try:
+        store.record_pushed_materials("/m/a.ifc", [{"layer_id": "L1"}, {"identity": {}}, "garbage"])
+        assert store.get_pushed_material("/m/a.ifc", "", "L1") is None
+    finally:
+        store.close()

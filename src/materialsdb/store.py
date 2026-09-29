@@ -86,6 +86,8 @@ class MaterialStore:
         if stored != SCHEMA_VERSION:
             self.connection.execute("DROP TABLE IF EXISTS materials")
             self.connection.execute("DROP TABLE IF EXISTS producer_files")
+            self.connection.execute("DROP TABLE IF EXISTS model_materials")
+            self.connection.execute("DROP TABLE IF EXISTS pushed_materials")
             self.connection.executescript(_SCHEMA)
             self.connection.execute(
                 "INSERT INTO meta(key, value) VALUES ('schema_version', ?) "
@@ -347,12 +349,22 @@ class MaterialStore:
         ).fetchone()
         return row[0] if row and row[0] is not None else None
 
-    def record_pushed_materials(self, model_path: str, entries: list[dict]) -> None:
+    def record_pushed_materials(self, model_path: str, entries: list) -> None:
         """Upsert the pushed-material snapshots for one model, keyed by material and layer."""
         pushed_at = datetime.datetime.now(datetime.timezone.utc).timestamp()
         for entry in entries:
-            material_id = entry["identity"]["material_id"]
-            layer_id = entry.get("layer_id") or ""
+            if not isinstance(entry, dict):
+                continue  # malformed entry: nothing to key a snapshot on
+            material_id = (entry.get("identity") or {}).get("material_id")
+            if not material_id:
+                continue  # malformed entry: nothing to key a snapshot on
+            # construction entries carry the layer id only via the psets;
+            # keying them by "" made their snapshots unreadable per layer
+            layer_id = (
+                entry.get("layer_id")
+                or (entry.get("psets") or {}).get("materialsdb.org_layer", {}).get("layer_id")
+                or ""
+            )
             self.connection.execute(
                 "INSERT INTO pushed_materials(model_path, material_id, layer_id, snapshot, pushed_at) "
                 "VALUES (?, ?, ?, ?, ?) "

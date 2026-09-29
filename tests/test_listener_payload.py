@@ -405,6 +405,91 @@ def test_construction_payload_carries_fingerprint_mode_and_update(store):
     assert material["identity"]["fingerprint"]
 
 
+def test_construction_decision_fields_match_layer_not_index(store):
+    """`validate_construction` can drop malformed raw layers, so the validated
+    index must not address the raw body: decisions are matched on
+    (material_id, thickness_m)."""
+    from materialsdb.gui.listener import _raw_decision_layer
+
+    update = {"00000000-0000-0000-0000-0000000000c1": "00000000-0000-0000-0000-0000000000b1"}
+    raw_layers = [
+        {"material_id": None, "thickness_m": 0.07},  # dropped by validation
+        {
+            "material_id": "00000000-0000-0000-0000-000000000002",
+            "thickness_m": 0.15,
+            "mode": "update",
+            "update": update,
+        },
+    ]
+    # the validated 0.15 layer is at raw index 1, not 0: positional lookup
+    # would hand the dropped layer's (empty) decision to it
+    matched = _raw_decision_layer(raw_layers, "00000000-0000-0000-0000-000000000002", 0.15)
+    assert matched is raw_layers[1]  # not the argued index 0
+    assert matched["mode"] == "update"
+    assert matched["update"] == update
+
+    # no unambiguous pair -> omit the decision fields (skip), never guess
+    assert _raw_decision_layer(raw_layers, "00000000-0000-0000-0000-000000000002", 0.22) == {}
+    assert _raw_decision_layer(raw_layers, "nope", 0.15) == {}
+    duplicate = [dict(raw_layers[1]), dict(raw_layers[1])]
+    assert _raw_decision_layer(duplicate, "00000000-0000-0000-0000-000000000002", 0.15) == {}
+
+
+def test_construction_payload_uses_own_decision_per_layer(store):
+    """Each validated layer keeps its own mode/update, resolved by pair."""
+    update = {"00000000-0000-0000-0000-0000000000c1": "00000000-0000-0000-0000-0000000000b1"}
+    payload, problems = build_add_construction_payload(
+        store,
+        body={
+            "name": "w",
+            "layers": [
+                {
+                    "material_id": "00000000-0000-0000-0000-000000000001",
+                    "thickness_m": 0.1,
+                    "mode": "replace",
+                    "replaces": {"material_id": "00000000-0000-0000-0000-000000000009"},
+                },
+                {
+                    "material_id": "00000000-0000-0000-0000-000000000002",
+                    "thickness_m": 0.15,
+                    "mode": "update",
+                    "update": update,
+                },
+            ],
+        },
+    )
+    assert problems == []
+    first, second = (layer["material"] for layer in payload["construction"]["layers"])
+    assert first["mode"] == "replace"
+    assert first["replaces"] == {"material_id": "00000000-0000-0000-0000-000000000009"}
+    assert first["update"] is None
+    assert second["mode"] == "update"
+    assert second["update"] == update
+    assert second["replaces"] is None
+
+
+def test_construction_decision_fields_omitted_when_ambiguous(store):
+    """Two raw layers with the same (material_id, thickness) cannot be told
+    apart: omit the decision fields (skip) rather than guess."""
+    update = {"00000000-0000-0000-0000-0000000000c1": "00000000-0000-0000-0000-0000000000b1"}
+    layer = {
+        "material_id": "00000000-0000-0000-0000-000000000002",
+        "thickness_m": 0.15,
+        "mode": "update",
+        "update": update,
+    }
+    payload, problems = build_add_construction_payload(
+        store,
+        body={"name": "w", "layers": [layer, dict(layer)]},
+    )
+    assert problems == []
+    for entry in payload["construction"]["layers"]:
+        material = entry["material"]
+        assert material["mode"] == "skip"
+        assert material["update"] is None
+        assert material["replaces"] is None
+
+
 def test_payload_carries_resolved_producer_style(store):
     payload, missing = build_add_materials_payload(store, [{"id": "00000000-0000-0000-0000-000000000001"}])
 

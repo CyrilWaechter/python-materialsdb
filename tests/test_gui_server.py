@@ -871,9 +871,59 @@ def test_listener_send_construction_records_snapshot(api):
         token=state.token,
     )
     assert status == 200
-    snapshot = state.resolve_store().get_pushed_material(model_path, "00000000-0000-0000-0000-000000000002", "")
+    snapshot = state.resolve_store().get_pushed_material(model_path, M2, L2B)
     assert snapshot is not None
-    assert snapshot["identity"]["material_id"] == "00000000-0000-0000-0000-000000000002"
+    assert snapshot["identity"]["material_id"] == M2
+
+
+def test_listener_send_construction_snapshot_produces_change_report(api):
+    """The construction snapshot must be keyed by the entry's org_layer layer
+    id, or /api/model/changes reports has_snapshot=False for construction
+    materials (Important 2)."""
+    server, state = api
+    store_ = state.resolve_store()
+    model_path = "/tmp/snapshot-construction-report.ifc"
+    request(
+        server,
+        "POST",
+        "/api/listener/register",
+        payload={"client_id": "c1", "model_path": model_path},
+        token=state.token,
+    )
+
+    status, _ = request(
+        server,
+        "POST",
+        "/api/listener/send",
+        payload={
+            "client_id": "c1",
+            "action": "add_construction",
+            "construction": {
+                "name": "snap wall",
+                "design_usage": "consDesignForWall",
+                "layers": [{"material_id": M2, "thickness_m": 0.15}],
+            },
+        },
+        token=state.token,
+    )
+    assert status == 200
+
+    snapshot = store_.get_pushed_material(model_path, M2, L2B)
+    assert snapshot is not None
+
+    # model map says the pushed material is stale -> `changed`
+    _ingest_model(
+        server,
+        state,
+        model_path,
+        {M2: {"fingerprint": "stale", "scheme": "materialsdb-fp/1", "layers": [{"layer_id": L2B, "thick": 0.15}]}},
+        register=False,
+    )
+    status, body = request(server, "GET", "/api/model/changes")
+    assert status == 200
+    item = body["changed"][0]
+    assert item["material_id"] == M2
+    assert item["has_snapshot"] is True
 
 
 def test_listener_send_unknown_client_404(api):

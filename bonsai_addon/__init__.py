@@ -78,7 +78,8 @@ def _model_path():
 
 def _safety_net(report, summary):
     """Append the push safety net: how many changed materials were not opted in
-    (left untouched) and how many replacements failed, so a push never silently
+    (left untouched), how many replacement(s) failed, and how many update
+    targets could no longer be found in the model, so a push never silently
     drops work."""
     summary = summary or {}
     skipped = summary.get("changed_skipped") or []
@@ -87,6 +88,9 @@ def _safety_net(report, summary):
     failed = summary.get("replace_failed") or []
     if failed:
         report += f"; {len(failed)} replacement(s) failed"
+    missing = summary.get("update_missing") or []
+    if missing:
+        report += f"; {len(missing)} update target(s) not found in the model"
     return report
 
 

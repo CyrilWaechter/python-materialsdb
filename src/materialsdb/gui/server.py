@@ -462,7 +462,6 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         else:
             self._send(400, {"error": f"unsupported action: {action}"})
             return
-        listener["pending"] = resolved
         # record what was pushed so a later task can diff the model against it
         model_path = listener.get("model_path")
         if model_path:
@@ -471,6 +470,7 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             else:
                 entries = [layer["material"] for layer in resolved["construction"]["layers"] if layer.get("material")]
             store_.record_pushed_materials(model_path, entries)
+        listener["pending"] = resolved
         # a fresh push invalidates the previous applied/error mark: the
         # dropdown shows a pending state until the add-on reports the new one
         listener["last_status"] = {"status": "pending", "detail": ""}
