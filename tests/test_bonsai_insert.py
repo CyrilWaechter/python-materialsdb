@@ -375,6 +375,7 @@ def test_apply_thick_less_layer_is_idempotent():
 
 
 A1 = "00000000-0000-0000-0000-0000000000a1"
+A1_NEW = "00000000-0000-0000-0000-0000000000c1"
 A2 = "00000000-0000-0000-0000-0000000000a2"
 MATERIAL_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -416,8 +417,11 @@ def test_apply_update_refreshes_material_in_place(store):
     entry["name"] = "Isolant A v2"
     entry["description"] = "desc v2"
     entry["category"] = "Category v2"
-    entry["update"] = {A1: A1}
+    entry["layer_id"] = A1_NEW
+    entry["update"] = {A1: A1_NEW}
+    entry["psets"]["materialsdb.org_layer"]["layer_id"] = A1_NEW
     entry["psets"]["materialsdb.org_layer"]["thick"] = 0.25
+    entry["layer"]["layer_id"] = A1_NEW
     entry["layer"]["thick_m"] = 0.25
 
     assert apply_add_materials(file, payload) == 0
@@ -429,10 +433,12 @@ def test_apply_update_refreshes_material_in_place(store):
     assert _fingerprint_of(material) == "new-fp"
     psets = ifcopenshell.util.element.get_psets(material)
     assert psets["Pset_MaterialCommon"]["Reference"] == "keep"  # foreign pset untouched
+    assert psets["materialsdb.org_layer"]["layer_id"] == A1_NEW  # re-pointed to the new id
     assert psets["materialsdb.org_layer"]["thick"] == pytest.approx(0.25)
     layer = next(layer for layer in file.by_type("IfcMaterialLayer") if layer.Material == material)
     assert layer.LayerThickness == pytest.approx(0.25)
     assert layer.Name == "Isolant A v2 | 250mm"
+    assert layer.Description == A1_NEW
 
 
 def test_apply_update_records_missing_model_layer(store):
@@ -454,6 +460,25 @@ def test_apply_update_records_missing_model_layer(store):
     assert _fingerprint_of(material) != "new"  # untouched
 
 
+def test_apply_update_records_mapping_for_another_layer(store):
+    file = ifcopenshell.file(schema="IFC4")
+    apply_add_materials(file, _payload(store))
+    material = _material_at(file, A1)
+    layers_by_id = insert._model_layers(file, MATERIAL_ID)
+    summary = {"update_missing": [], "changed_skipped": []}
+    entry = {
+        "layer_id": A1,
+        "identity": {"material_id": MATERIAL_ID, "fingerprint": "new"},
+        "update": {A1: A2},  # targets the other new layer, not this entry's
+        "psets": {},
+    }
+
+    insert._apply_update(file, entry, material, layers_by_id, summary)
+
+    assert summary["update_missing"] == [A1]  # recorded, not dropped silently
+    assert _fingerprint_of(material) != "new"
+
+
 def test_apply_skip_leaves_changed_material_untouched(store):
     file = ifcopenshell.file(schema="IFC4")
     payload = _payload(store)
@@ -467,10 +492,29 @@ def test_apply_skip_leaves_changed_material_untouched(store):
     entry["name"] = "Changed"
     # mode stays at the "skip" default
 
-    assert apply_add_materials(file, payload) == 0
+    summary = {}
+    assert apply_add_materials(file, payload, summary) == 0
 
+    assert summary["changed_skipped"] == [MATERIAL_ID]
+    assert summary["update_missing"] == []
     assert material.Name == original_name
     assert _fingerprint_of(material) == original_fingerprint
+
+
+def test_apply_update_exposes_update_missing(store):
+    file = ifcopenshell.file(schema="IFC4")
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+    entry = next(e for e in payload["materials"] if e["layer_id"] == A1)
+    entry["mode"] = "update"
+    entry["identity"]["fingerprint"] = "new-fp"
+    entry["update"] = {"no-such-layer": A1}
+
+    summary = {}
+    assert apply_add_materials(file, payload, summary) == 0
+
+    assert summary["update_missing"] == ["no-such-layer"]
+    assert summary["changed_skipped"] == []
 
 
 def test_apply_backfills_legacy_fingerprint(store):

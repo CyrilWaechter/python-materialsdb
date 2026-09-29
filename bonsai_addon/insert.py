@@ -163,18 +163,22 @@ def _refresh_layer(file, entry, layer) -> None:
     layer.Description = str(_entry_layer_id(entry) or "")
 
 
-def _apply_update(file, entry, material, layers_by_id, summary) -> None:
+def _apply_update(file, entry, material, layers_by_id, summary) -> bool:
     """Refresh the model layer(s) that map to this entry's new layer id.
 
-    Only mappings whose new layer id equals the entry's own layer id are this
-    entry's responsibility. A mapping to a model layer absent from
-    `layers_by_id` is recorded in `summary["update_missing"]`; a legacy entity
-    with no fingerprint is backfilled; an entity whose fingerprint already
-    matches is left alone."""
+    Only mappings whose new layer id equals the entry's own layer id can be
+    applied here; a mapping targeting another entry's layer, or a model layer
+    absent from `layers_by_id`, is recorded in `summary["update_missing"]`
+    rather than dropped silently. A legacy entity with no fingerprint is
+    backfilled; an entity whose fingerprint already matches is left alone.
+    Returns True when at least one entity was refreshed in place."""
     new_layer_id = _entry_layer_id(entry)
     new_fingerprint = entry["identity"].get("fingerprint")
+    refreshed = False
     for model_layer_id, mapped_new_id in (entry.get("update") or {}).items():
         if mapped_new_id != new_layer_id:
+            if model_layer_id not in summary["update_missing"]:
+                summary["update_missing"].append(model_layer_id)
             continue
         entities = layers_by_id.get(model_layer_id)
         if not entities:
@@ -189,8 +193,10 @@ def _apply_update(file, entry, material, layers_by_id, summary) -> None:
             if current == new_fingerprint:
                 continue
             _refresh_material(file, entry, model_material)
+            refreshed = True
             if model_layer is not None:
                 _refresh_layer(file, entry, model_layer)
+    return refreshed
 
 
 def _add_identity_pset(file, material, identity):
@@ -320,18 +326,23 @@ def _create_placeholder_material(file, placeholder):
     return material
 
 
-def apply_add_materials(file, payload) -> int:
+def apply_add_materials(file, payload, summary=None) -> int:
     """Create IfcMaterial (+ identity/property psets, layer + set, style) per
     payload entry. Entries whose (material_id, layer_id) key already exists are
     re-styled when their colour is ours or missing. An existing material whose
     stored fingerprint differs from the entry's is left alone (mode "skip") or
     refreshed in place per the entry's `update` mapping (mode "update"); a
     legacy material without a fingerprint gets the baseline stamped on it.
-    Returns the number created."""
+    Returns the number created. When a `summary` dict is passed it is populated
+    with `changed_skipped`/`update_missing` (the picker's changed material ids
+    and any update mappings that could not be applied)."""
     existing = _existing_keys(file)
     known_by_id = existing_materials_by_id(file)
     created = 0
-    summary = {"update_missing": [], "changed_skipped": []}
+    if summary is None:
+        summary = {}
+    summary.setdefault("update_missing", [])
+    summary.setdefault("changed_skipped", [])
     for entry in payload.get("materials") or []:
         identity = entry["identity"]
         material_id = identity["material_id"]
@@ -432,9 +443,12 @@ def apply_add_construction(file, payload) -> dict:
         material = known.get(key)
         current = known_by_id.get(material_id)
         changed = False
+        refreshed = False
         if current is not None:
             if mode == "update":
-                _apply_update(file, entry, current, _model_layers(file, material_id), summary)
+                # _refresh_material already applied the style, so skip the
+                # generic re-style below when it refreshed in place
+                refreshed = _apply_update(file, entry, current, _model_layers(file, material_id), summary)
                 if material is None:
                     material = current
             else:
@@ -463,8 +477,9 @@ def apply_add_construction(file, payload) -> dict:
             summary["materials_created"] += 1
         # style reused materials too: an earlier push (or a pre-fix session)
         # may have left them colourless, and users expect the colour to show.
-        # A changed "skip" leaves the material untouched entirely.
-        if not changed and _should_style(material):
+        # A changed "skip" leaves the material untouched entirely, and an
+        # in-place update already refreshed its style in _refresh_material.
+        if not changed and not refreshed and _should_style(material):
             _apply_style(file, entry, material)
         layers.append((layer, material))
 
