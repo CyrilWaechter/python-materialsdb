@@ -165,9 +165,11 @@ gains them on the export paths too, for consistency).
 
 **Payload decisions.** Each material entry gains `mode ∈ {skip, update, replace}`
 (default `skip` for an existing material) plus `fingerprint` +
-`fingerprint_scheme` in `identity`. A `replace` entry carries the **new**
-material's data and a `replaces: {material_id, layer_id?}` target identifying
-the model material/layer it supersedes.
+`fingerprint_scheme` in `identity`. The **server** owns matching: an `update`
+entry carries the resolved mapping `update: {model_layer_id: new_layer_id}`
+(model layer = `materialsdb.org_layer.layer_id`), and a `replace` entry carries
+the **new** material's data plus a `replaces: {material_id, layer_id?}` target
+identifying the model material/layer it supersedes.
 
 **Applying an entry:**
 - material absent from the model → create as today;
@@ -175,10 +177,9 @@ the model material/layer it supersedes.
 - present, fingerprint differs:
   - `skip` → unchanged, added to the safety-net report (no backfill: a detected
     change must not be masked);
-  - `update` → match layers; if fully and unambiguously matched, update in
-    place; otherwise the picker should not have offered `update` (the add-on
-    re-checks the same rules from the model map and reports instead of
-    guessing);
+  - `update` → apply the mapping mechanically, refreshing only the listed model
+    layers; if a mapped model layer is no longer present, report it and apply
+    the rest (never guess);
   - `replace` → replace the targeted layer(s) or whole material.
 
 **In-place update (per matched `IfcMaterial`, GUID and references preserved):**
