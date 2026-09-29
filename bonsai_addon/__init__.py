@@ -17,7 +17,7 @@ import bpy
 from bonsai import tool
 
 from . import insert
-from .discovery import ListenerClient, _cache_folder, clear_gui_info, read_gui_info
+from .discovery import ListenerClient, _cache_folder, _model_material_map, clear_gui_info, read_gui_info
 from .read_construction import ReadError, read_construction_from_element
 
 _CLIENT = None
@@ -54,6 +54,7 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
             count = insert.apply_add_materials(tool.Ifc.get(), payload)
             _sync_style_materials(tool.Ifc.get())
             _CLIENT.report("applied", f"{count} material(s) added")
+            _send_model_map()
         elif action == "add_construction":
             result = insert.apply_add_construction(tool.Ifc.get(), payload)
             _link_pushed_types(tool.Ifc.get(), payload["construction"])
@@ -65,12 +66,23 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
                 f"{result['placeholders_matched']} placeholder(s) matched, "
                 f"{result['psets_written']} thermal pset(s) written",
             )
+            _send_model_map()
         else:
             _CLIENT.report("error", f"unknown action: {action}")
 
 
 def _model_path():
     return str(tool.Ifc.get_path() or "")
+
+
+def _send_model_map():
+    """Report the open model's material map to the GUI (status/changes)."""
+    try:
+        file = tool.Ifc.get()
+        materials = _model_material_map(file) if file is not None else {}
+        _CLIENT.send_model_map(_model_path(), materials)
+    except Exception:  # noqa: BLE001, S110 - reporting is best-effort; never break the poll loop or a push
+        pass
 
 
 def _undo_label(payload):
@@ -129,6 +141,7 @@ def _poll_timer():
         path = _model_path()
         if path != _CLIENT.registered_path:
             _CLIENT.register(path)
+            _send_model_map()
         payload = _CLIENT.poll()
         if payload is not None:
             _PENDING = payload
@@ -357,6 +370,7 @@ class MATERIALSDB_OT_toggle_listener(bpy.types.Operator):
                 self.report({"ERROR"}, f"materialsdb-gui not reachable: {err}")
                 return {"CANCELLED"}
             bpy.app.timers.register(_poll_timer, persistent=True)
+            _send_model_map()
             self.report({"INFO"}, "materialsdb listener started")
         else:
             _CLIENT = None

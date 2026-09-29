@@ -30,6 +30,47 @@ def clear_gui_info():
     (_cache_folder() / "gui.json").unlink(missing_ok=True)
 
 
+def _model_material_map(file):
+    """material_id -> {"fingerprint", "scheme", "layers": [{"layer_id", "thick"}]}.
+
+    Scans IfcMaterial identity (`materialsdb`) + `materialsdb.org_layer` psets,
+    deduping per material_id and per layer_id (a material is one entity per
+    layer). `thick` is the org_layer value (metres), else the material's
+    IfcMaterialLayer thickness; a material with no org_layer pset has no layers
+    (the server treats it as a legacy baseline)."""
+    import ifcopenshell.util.element
+
+    thickness_by_material = {}
+    for layer in file.by_type("IfcMaterialLayer"):
+        if layer.Material is not None and layer.Material not in thickness_by_material:
+            thickness_by_material[layer.Material] = layer.LayerThickness
+
+    materials = {}
+    for material in file.by_type("IfcMaterial"):
+        psets = ifcopenshell.util.element.get_psets(material)
+        identity = psets.get("materialsdb") or {}
+        material_id = identity.get("material_id")
+        if material_id is None:
+            continue
+        entry = materials.setdefault(material_id, {"fingerprint": None, "scheme": None, "layers": []})
+        if entry["fingerprint"] is None:
+            entry["fingerprint"] = identity.get("fingerprint")
+        if entry["scheme"] is None:
+            entry["scheme"] = identity.get("fingerprint_scheme")
+        org_layer = psets.get("materialsdb.org_layer") or {}
+        layer_id = org_layer.get("layer_id")
+        if layer_id is None:
+            continue
+        layer_id = str(layer_id)
+        if any(existing["layer_id"] == layer_id for existing in entry["layers"]):
+            continue
+        thick = org_layer.get("thick")
+        if thick is None:
+            thick = thickness_by_material.get(material)
+        entry["layers"].append({"layer_id": layer_id, "thick": thick})
+    return materials
+
+
 class ListenerClient:
     """Minimal HTTP client: register once per model, poll for pushes, report
     application status back to the GUI."""
@@ -75,6 +116,27 @@ class ListenerClient:
     def report(self, status, detail=""):
         self._request(
             "POST", "/api/listener/status", {"client_id": self.client_id, "status": status, "detail": str(detail or "")}
+        )
+
+    def send_model_map(self, model_path, materials):
+        """Report the open model's material map to the GUI.
+
+        The server ignores the top-level `scheme`; it is derived from the first
+        entry that carries one (each per-material entry has its own)."""
+        scheme = ""
+        for entry in (materials or {}).values():
+            if isinstance(entry, dict) and entry.get("scheme"):
+                scheme = entry["scheme"]
+                break
+        self._request(
+            "POST",
+            "/api/listener/model",
+            {
+                "client_id": self.client_id,
+                "model_path": str(model_path or ""),
+                "scheme": scheme,
+                "materials": materials,
+            },
         )
 
     def send_to_composer(self, construction):
