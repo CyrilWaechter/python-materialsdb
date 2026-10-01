@@ -752,7 +752,6 @@ def test_construction_push_reloads_existing_instances(tmp_path):
     old_cache_env = None
     try:
         bpy.ops.bim.load_project(filepath=str(model), should_start_fresh_session=True)
-        file = tool.Ifc.get()
         walls = [
             obj
             for obj in bpy.data.objects

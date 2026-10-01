@@ -1,18 +1,23 @@
-// Headless check of the settings page general options, colour scheme and the
-// palette editor core.
+// Headless check of the settings page general options, colour scheme, model
+// targeting and the palette editor.
 // Runs the real static/settings.js in a Node VM with DOM stubs and asserts:
 //   (a) #scheme lists the server schemes and shows the effective scheme from
 //       GET /api/config;
 //   (b) changing a control posts the matching /api/config patch;
-//   (c) apply-colours is enabled with a connected model, calls
-//       /api/model/restyle and reports the queued count + listener detail;
-//   (d) without a model it is disabled and the hint is visible;
-//   (e) cloning renders all 17 editor rows, editing Concrete re-renders the
-//       preview and save-as posts the edited palette under the encoded name;
-//   (f) rename/delete post to the encoded /rename and /delete endpoints,
-//       selecting a scheme renders the export GET anchor, and importing an
-//       envelope shows the server's 409 conflict before a retry succeeds and
-//       selects the imported scheme.
+//   (c) #model-target is populated from /api/listener/clients, apply-colours
+//       posts its client_id to /api/model/restyle and a stateful clients stub
+//       reports pending then applied, so the listener detail lands in
+//       #apply-status;
+//   (d) without a model the button is disabled, the hint is visible and the
+//       model selector is hidden;
+//   (e) selecting a built-in loads all 17 editor rows as an editable draft
+//       with Save disabled and Save as enabled; editing Concrete re-renders
+//       the preview and save-as posts the edited palette under a new name;
+//   (f) rename/delete post to the encoded /rename and /delete endpoints and
+//       importing an envelope shows the server's 409 conflict before a retry
+//       succeeds and selects the imported scheme;
+//   (g) export writes the current draft envelope through a stubbed
+//       window.showSaveFilePicker, under the name suggested from #scheme-name.
 // Usage: node settings_page_harness.mjs <path/to/settings.js>
 
 import fs from "node:fs";
@@ -62,7 +67,7 @@ class El {
 
 const elements = new Map();
 const el = (id) => {
-  if (!elements.has(id)) elements.set(id, new El(id === "scheme" ? "select" : "div"));
+  if (!elements.has(id)) elements.set(id, new El(id === "scheme" || id === "model-target" ? "select" : "div"));
   return elements.get(id);
 };
 
@@ -82,6 +87,8 @@ globalThis.window = { MATERIALSDB_TOKEN: "test-token" };
 const config = { lang: "fr", country: "CH", scheme: "Lesosai", schemes: ["Lesosai", "Mine"], ignore_producer_color: false };
 let changesModelPath = "/m/x.ifc";
 let restyleCalls = 0;
+let restyleBody = null;
+let statusPolls = 0; // /api/listener/clients calls since the last restyle
 const posts = [];
 const schemePosts = [];
 const schemeList = [{ name: "Lesosai", builtin: true }, { name: "Mine", builtin: false }];
@@ -97,6 +104,23 @@ const schemeCategories = Object.fromEntries(CATEGORY_NAMES.map((name, index) => 
   name,
   { hatch: "", color: [(index * 11) % 256, (index * 29) % 256, (index * 47) % 256] },
 ]));
+
+// stateful listener stub: the first poll after a restyle is still pending, the
+// next one reports the applied detail (drives the 1 s post-apply poll)
+function listenerClients() {
+  if (!changesModelPath) return { clients: [] };
+  const pending = restyleCalls > 0 && statusPolls <= 1;
+  return {
+    clients: [{
+      client_id: "c1",
+      model_path: changesModelPath,
+      last_status: pending
+        ? { status: "pending", detail: "" }
+        : { status: "applied", detail: "3 material(s) restyled" },
+    }],
+  };
+}
+
 async function fakeFetch(path, options = {}) {
   const json = (data) => new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } });
   const fail = (status, message) =>
@@ -148,8 +172,16 @@ async function fakeFetch(path, options = {}) {
     return json({ name, builtin: name === "Lesosai", categories: schemeCategories });
   }
   if (path === "/api/model/changes") return json({ model_path: changesModelPath, counts: {} });
-  if (path === "/api/model/restyle") { restyleCalls += 1; return json({ queued: 3, skipped: [], scheme: "Lesosai" }); }
-  if (path === "/api/listener/clients") return json({ clients: [{ model_path: "/m/x.ifc", last_status: { status: "applied", detail: "3 material(s) restyled" } }] });
+  if (path === "/api/model/restyle") {
+    restyleCalls += 1;
+    statusPolls = 0;
+    restyleBody = JSON.parse(options.body || "{}");
+    return json({ queued: 3, skipped: [], scheme: "Lesosai" });
+  }
+  if (path === "/api/listener/clients") {
+    statusPolls += 1;
+    return json(listenerClients());
+  }
   throw new Error("unhandled fetch: " + path);
 }
 globalThis.fetch = fakeFetch;
@@ -236,47 +268,80 @@ await sleep(20);
 const schemePost = posts[posts.length - 1];
 mark("scheme post", schemePost && schemePost.scheme === "Mine", JSON.stringify(schemePost));
 
-// (c) apply enabled with a model, restyle + listener detail ---------------
+// (c) model target: #model-target lists the connected listener's model -----
+const modelSelect = S.__get("model-target");
+const modelRow = S.__get("model-target-row");
+const targetHtml = modelSelect.innerHTML;
+mark(
+  "model target",
+  targetHtml.includes('value="c1"') &&
+    targetHtml.includes(">x.ifc<") &&
+    targetHtml.includes('title="/m/x.ifc"') &&
+    modelSelect.value === "c1" &&
+    modelRow.style.display !== "none",
+  `html=${JSON.stringify(targetHtml)} value=${JSON.stringify(modelSelect.value)} row=${JSON.stringify(modelRow.style.display)}`,
+);
+
+// (c) apply enabled with a model, restyle carries the target client_id, and
+// the stateful status poll reports pending then applied --------------------
 const applyButton = S.__get("apply-colours");
 const hint = S.__get("apply-hint");
 const enabled = !applyButton.disabled && hint.style.display === "none";
 applyButton.dispatch("click");
-await sleep(50);
+await sleep(1200);
 const statusText = S.__get("apply-status").textContent;
 mark(
   "apply",
-  enabled && restyleCalls === 1 && /3/.test(statusText) && statusText.includes("3 material(s) restyled"),
+  enabled && restyleCalls === 1 && /3 queued/.test(statusText),
   `enabled=${enabled} restyleCalls=${restyleCalls} status=${JSON.stringify(statusText)}`,
 );
+mark(
+  "restyle target",
+  JSON.stringify(restyleBody) === JSON.stringify({ client_id: "c1" }),
+  `body=${JSON.stringify(restyleBody)}`,
+);
+mark(
+  "apply status poll",
+  statusPolls >= 2 && statusText.includes("3 material(s) restyled"),
+  `statusPolls=${statusPolls} status=${JSON.stringify(statusText)}`,
+);
 
-// (d) no model: apply disabled + hint, without a restyle -------------------
+// (d) no model: apply disabled + hint visible + target selector hidden -----
 changesModelPath = null;
 await S.__loadSettings();
 mark(
   "no-model hint",
-  applyButton.disabled === true && hint.style.display !== "none" && restyleCalls === 1,
-  `disabled=${applyButton.disabled} hint=${JSON.stringify(hint.style.display)} restyleCalls=${restyleCalls}`,
+  applyButton.disabled === true &&
+    hint.style.display !== "none" &&
+    modelSelect.style.display === "none" &&
+    modelSelect.innerHTML === "" &&
+    restyleCalls === 1,
+  `disabled=${applyButton.disabled} hint=${JSON.stringify(hint.style.display)} ` +
+    `target=${JSON.stringify(modelSelect.style.display)} restyleCalls=${restyleCalls}`,
 );
 
-// (e) palette editor: clone the selected (built-in) palette, edit Concrete,
-// save as a new name ------------------------------------------------------
-const cloneButton = S.__get("clone-scheme");
+// (e) palette editor: the effective built-in loads as an editable draft with
+// Save disabled and Save as enabled -----------------------------------------
 const rowsBox = S.__get("palette-rows");
+const saveButton = S.__get("save-scheme");
 const saveAsButton = S.__get("save-as-scheme");
 const nameField = S.__get("scheme-name");
-const emptyBeforeClone = rowsBox.innerHTML === "";
-const saveAsDisabledBefore = saveAsButton.disabled === true;
-cloneButton.dispatch("click");
-await sleep(50);
 const rowCategories = new Set();
 const categoryRe = /data-category="([^"]+)"/g;
 let rowMatch;
 while ((rowMatch = categoryRe.exec(rowsBox.innerHTML)) !== null) rowCategories.add(rowMatch[1]);
 const hexFields = (rowsBox.innerHTML.match(/data-role="hex"/g) || []).length;
+const chipsBefore = S.__get("preview-chips").innerHTML;
 mark(
   "editor rows",
-  emptyBeforeClone && saveAsDisabledBefore && rowCategories.size === 17 && hexFields === 17 && saveAsButton.disabled === false,
-  `empty=${emptyBeforeClone} disabledBefore=${saveAsDisabledBefore} categories=${rowCategories.size} hexFields=${hexFields} saveAsDisabled=${saveAsButton.disabled}`,
+  rowCategories.size === 17 &&
+    hexFields === 17 &&
+    saveButton.disabled === true &&
+    saveAsButton.disabled === false &&
+    nameField.value === "Lesosai copy" &&
+    (chipsBefore.match(/class="chip"/g) || []).length === 17,
+  `categories=${rowCategories.size} hexFields=${hexFields} save=${saveButton.disabled} ` +
+    `saveAs=${saveAsButton.disabled} name=${JSON.stringify(nameField.value)}`,
 );
 
 // editing a colour input updates the draft and both live previews ---------
@@ -292,7 +357,7 @@ mark(
   `chips=${JSON.stringify(chipsHtml)} section=${JSON.stringify(sectionHtml)}`,
 );
 
-// save as… posts the draft under the #scheme-name and refreshes the list --
+// save as… posts the edited built-in draft under the #scheme-name ----------
 nameField.value = "Studio Palette";
 saveAsButton.dispatch("click");
 await sleep(50);
@@ -384,16 +449,40 @@ mark(
 );
 delete globalThis.window.confirm;
 
-// (f) export: selecting a custom scheme renders the download anchor into the
-// non-interactive #export-scheme container ---------------------------------
-await S.__selectScheme("Mine");
-const exportButton = S.__get("export-scheme");
-const exportHtml = exportButton.innerHTML;
+// (g) export: a stubbed showSaveFilePicker receives the current draft --------
+rowsBox.dispatch("input", { target: { dataset: { category: "Concrete" }, value: "#aabbcc" } });
+await sleep(10);
+nameField.value = "Mine Export";
+let exportCall = null;
+globalThis.window.showSaveFilePicker = async (options) => {
+  exportCall = { options, text: null };
+  return {
+    createWritable: async () => ({
+      write: async (text) => { exportCall.text = text; },
+      close: async () => {},
+    }),
+  };
+};
+S.__get("export-scheme").dispatch("click");
+await sleep(50);
+let exportEnvelope = null;
+try {
+  exportEnvelope = exportCall && exportCall.text ? JSON.parse(exportCall.text) : null;
+} catch {
+  exportEnvelope = null;
+}
+const exportColour = exportEnvelope && exportEnvelope.categories && exportEnvelope.categories.Concrete;
 mark(
   "export",
-  exportHtml.includes('href="/api/schemes/Mine/export"') && exportHtml.includes('download="Mine.json"'),
-  `html=${JSON.stringify(exportHtml)}`,
+  !!exportEnvelope &&
+    exportEnvelope.format === "materialsdb-scheme/1" &&
+    exportEnvelope.name === "Mine Export" &&
+    !!exportColour &&
+    JSON.stringify(exportColour.color) === JSON.stringify([170, 187, 204]) &&
+    exportCall.options.suggestedName === "Mine Export.json",
+  `envelope=${JSON.stringify(exportEnvelope)} suggested=${JSON.stringify(exportCall && exportCall.options)}`,
 );
+delete globalThis.window.showSaveFilePicker;
 
 // rename: posts {"new_name": "Better"} to the encoded /rename endpoint ------
 const renameButton = S.__get("rename-scheme");

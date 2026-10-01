@@ -1,7 +1,8 @@
 // materialsdb settings page: general options, colour scheme and palette editor.
 // Owns the shared API helper plus the general/colour-scheme controls, the
-// scheme list, the editor core (clone/edit/preview/save) and the palette list
-// actions (rename/delete/export/import).
+// scheme list, the editor core (edit/preview/save) and the palette list
+// actions (rename/delete/export/import). Also owns the model-target selector
+// and the post-apply listener status poll.
 const TOKEN = window.MATERIALSDB_TOKEN;
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) =>
@@ -9,6 +10,8 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) =>
 
 const PREVIEW_SAMPLES = ["Render", "Masonry", "Insulation", "Wood_Timberproducts", "Concrete"];
 const SCHEME_FORMAT = "materialsdb-scheme/1";
+const APPLY_STATUS_TIMEOUT_MS = 10000;
+const APPLY_STATUS_INTERVAL_MS = 1000;
 
 let schemesList = [];     // [{name, builtin}] from GET /api/schemes
 let activeScheme = null;  // effective scheme, from GET /api/config
@@ -36,6 +39,8 @@ function setText(id, text) {
 }
 
 const deepCopy = (value) => JSON.parse(JSON.stringify(value));
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function hexColor(color) {
   const rgb = Array.isArray(color) ? color : [0, 0, 0];
@@ -77,16 +82,15 @@ function renderSchemeList() {
 function updateEditorButtons() {
   const save = $("save-scheme");
   const saveAs = $("save-as-scheme");
-  const clone = $("clone-scheme");
   const rename = $("rename-scheme");
   const remove = $("delete-scheme");
+  const exportButton = $("export-scheme");
   if (save) save.disabled = !(draft && !draft.builtin);
   if (saveAs) saveAs.disabled = !draft;
-  if (clone) clone.disabled = !activeScheme;
+  if (exportButton) exportButton.disabled = !draft;
   const custom = !!activeScheme && !schemeIsBuiltin(activeScheme);
   if (rename) rename.disabled = !custom;
   if (remove) remove.disabled = !custom;
-  exportSelected();
 }
 
 function schemeIsBuiltin(name) {
@@ -164,9 +168,48 @@ function applyModelState(changes) {
   if (hint) hint.style.display = modelPath ? "none" : "";
 }
 
+function basename(path) {
+  const parts = String(path ?? "").split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(path ?? "");
+}
+
+function applyListenerClients(clients) {
+  // only listeners with a connected model are valid restyle targets
+  const targets = (clients || []).filter((client) => client && client.model_path);
+  const select = $("model-target");
+  const row = $("model-target-row");
+  const hidden = targets.length ? "" : "none";
+  if (row) row.style.display = hidden;
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = targets.map((client) =>
+    `<option value="${esc(client.client_id)}" title="${esc(client.model_path)}">` +
+    `${esc(basename(client.model_path))}</option>`).join("");
+  if (targets.some((client) => client.client_id === previous)) select.value = previous;
+  else if (targets.length) select.value = targets[0].client_id;
+  else select.value = "";
+  select.style.display = hidden;
+}
+
+async function refreshListenerTargets() {
+  try {
+    const { clients } = await api("/api/listener/clients");
+    applyListenerClients(clients);
+  } catch {
+    /* best-effort: the next 5 s poll retries */
+  }
+}
+
+async function refreshModelChanges() {
+  try {
+    applyModelState(await api("/api/model/changes"));
+  } catch {
+    /* best-effort: apply-colours keeps its previous enabled state */
+  }
+}
+
 async function loadDraft(name) {
-  const entry = schemesList.find((scheme) => scheme.name === name);
-  if (!name || (entry && entry.builtin)) {
+  if (!name) {
     draft = null;
     renderEditor();
     renderPreview();
@@ -175,9 +218,16 @@ async function loadDraft(name) {
   try {
     const payload = await api(`/api/schemes/${encodeURIComponent(name)}`);
     if (activeScheme !== name) return; // a newer selection won the race
-    draft = payload.builtin
-      ? null
-      : { name: payload.name || name, categories: deepCopy(payload.categories || {}), builtin: false, dirty: false };
+    // built-ins load as an editable draft: the effective palette is copied,
+    // but saving must create a new custom scheme (Save stays disabled)
+    draft = {
+      name: payload.name || name,
+      categories: deepCopy(payload.categories || {}),
+      builtin: !!payload.builtin,
+      dirty: false,
+    };
+    const field = $("scheme-name");
+    if (field) field.value = draft.builtin ? `${draft.name} copy` : draft.name;
   } catch (err) {
     draft = null;
     setText("editor-status", err.message);
@@ -216,7 +266,6 @@ async function selectScheme(name) {
   const select = $("scheme");
   if (select) select.value = name;
   renderSchemeList();
-  exportSelected();
   try {
     await saveConfig({ scheme: name });
   } catch (err) {
@@ -232,33 +281,9 @@ function mayDiscardDraft(name) {
   return confirmFn(`Discard unsaved changes to ${draft.name}?`);
 }
 
-async function cloneSelected() {
-  const name = activeScheme;
-  if (!name) {
-    setText("editor-status", "select a scheme to clone");
-    return;
-  }
-  try {
-    const payload = await api(`/api/schemes/${encodeURIComponent(name)}`);
-    draft = {
-      name: payload.name || name,
-      categories: deepCopy(payload.categories || {}),
-      builtin: !!payload.builtin,
-      dirty: true,
-    };
-    const field = $("scheme-name");
-    if (field) field.value = `${draft.name} copy`;
-    renderEditor();
-    renderPreview();
-    setText("editor-status", `cloned ${name} — edit, then save as a new name`);
-  } catch (err) {
-    setText("editor-status", err.message);
-  }
-}
-
 async function saveDraft(asNewName) {
   if (!draft) {
-    setText("editor-status", "clone a scheme before saving");
+    setText("editor-status", "select a scheme before saving");
     return;
   }
   const requested = typeof asNewName === "string" ? asNewName.trim() : "";
@@ -352,18 +377,47 @@ async function deleteSelected() {
   setText("editor-status", `deleted ${name}`);
 }
 
-function exportSelected() {
-  const target = $("export-scheme");
-  if (!target) return;
-  const name = activeScheme;
-  if (!name) {
-    target.innerHTML = "";
+function exportPayload() {
+  if (!draft) return null;
+  const field = $("scheme-name");
+  const typed = field && typeof field.value === "string" ? field.value.trim() : "";
+  const name = typed || String(draft.name || "").trim();
+  if (!name) return null;
+  return { format: SCHEME_FORMAT, name, categories: deepCopy(draft.categories) };
+}
+
+async function exportScheme() {
+  const payload = exportPayload();
+  if (!payload) {
+    setText("editor-status", "select a scheme before exporting");
     return;
   }
-  // the GET export is not token-gated, so a plain download anchor works; the
-  // #export-scheme container stays non-interactive (span) so the anchor is valid
-  const href = `/api/schemes/${encodeURIComponent(name)}/export`;
-  target.innerHTML = `<a href="${esc(href)}" download="${esc(name)}.json">export ${esc(name)}.json</a>`;
+  const text = JSON.stringify(payload, null, 2);
+  try {
+    if (typeof window.showSaveFilePicker === "function") {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: `${payload.name}.json`,
+        types: [{ description: "materialsdb scheme", accept: { "application/json": [".json"] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(text);
+      await writable.close();
+      setText("editor-status", `exported ${payload.name}.json`);
+      return;
+    }
+    const chosen = typeof window.prompt === "function" ? window.prompt("file name", `${payload.name}.json`) : null;
+    if (!chosen) return; // cancelled: not an error
+    const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = chosen;
+    link.click();
+    URL.revokeObjectURL(url);
+    setText("editor-status", `exported ${chosen}`);
+  } catch (err) {
+    if (err && err.name === "AbortError") return; // picker cancelled: not an error
+    setText("editor-status", `export failed: ${err && err.message ? err.message : err}`);
+  }
 }
 
 function resetImportFile() {
@@ -420,6 +474,7 @@ async function loadSettings() {
     api("/api/config"),
     api("/api/schemes"),
     api("/api/model/changes"),
+    api("/api/listener/clients"),
   ]);
   const message = (reason) => (reason && reason.message ? reason.message : String(reason));
   if (results[1].status === "fulfilled") {
@@ -433,35 +488,68 @@ async function loadSettings() {
   populateSchemeSelect();
   renderSchemeList();
   applyModelState(results[2].status === "fulfilled" ? results[2].value : null);
+  if (results[3].status === "fulfilled") applyListenerClients(results[3].value.clients);
   await loadDraft(activeScheme);
 }
 
-async function applyColours() {
-  try {
-    const result = await api("/api/model/restyle", { method: "POST", body: JSON.stringify({}) });
-    const skipped = Array.isArray(result.skipped) ? result.skipped.length : result.skipped;
-    setText("apply-status", `${result.queued} queued, ${skipped} not in store`);
-    await refreshApplyStatus();
-  } catch (err) {
-    setText("apply-status", err.message);
-  }
+function appendApplyStatus(detail) {
+  if (!detail) return;
+  const target = $("apply-status");
+  if (!target) return;
+  const current = target.textContent || "";
+  target.textContent = current ? `${current} — ${detail}` : detail;
 }
 
 async function refreshApplyStatus() {
+  // legacy fallback (no explicit target): match the active model's listener
   try {
     const { clients } = await api("/api/listener/clients");
     const client = (clients || []).find((entry) => entry.model_path && entry.model_path === modelPath);
     const status = client && client.last_status;
-    if (status && status.status === "applied" && status.detail) {
-      const target = $("apply-status");
-      if (target) {
-        const current = target.textContent || "";
-        target.textContent = current ? `${current} — ${status.detail}` : status.detail;
-      }
-    }
+    if (status && status.status === "applied" && status.detail) appendApplyStatus(status.detail);
   } catch {
     /* the listener detail is best-effort */
   }
+}
+
+async function pollApplyStatus(clientId) {
+  const deadline = Date.now() + APPLY_STATUS_TIMEOUT_MS;
+  for (;;) {
+    let clients = null;
+    try {
+      ({ clients } = await api("/api/listener/clients"));
+    } catch {
+      /* transient failure: retry until the deadline */
+    }
+    const client = (clients || []).find((entry) => entry && entry.client_id === clientId);
+    const status = client && client.last_status;
+    if (status && status.status && status.status !== "pending") {
+      appendApplyStatus(status.detail);
+      return;
+    }
+    if (Date.now() >= deadline) return;
+    await sleep(APPLY_STATUS_INTERVAL_MS);
+  }
+}
+
+async function applyColours() {
+  const select = $("model-target");
+  const clientId = select ? String(select.value || "") : "";
+  const body = clientId ? { client_id: clientId } : {};
+  let result;
+  try {
+    result = await api("/api/model/restyle", { method: "POST", body: JSON.stringify(body) });
+  } catch (err) {
+    setText("apply-status", err.message);
+    return;
+  }
+  const skipped = Array.isArray(result.skipped) ? result.skipped.length : result.skipped;
+  setText("apply-status", `${result.queued} queued, ${skipped} not in store`);
+  if (!clientId) {
+    await refreshApplyStatus();
+    return;
+  }
+  if (result.queued > 0) await pollApplyStatus(clientId);
 }
 
 function bindControls() {
@@ -491,9 +579,6 @@ function bindControls() {
     });
   }
 
-  const cloneButton = $("clone-scheme");
-  if (cloneButton) cloneButton.addEventListener("click", () => cloneSelected());
-
   const saveButton = $("save-scheme");
   if (saveButton) saveButton.addEventListener("click", () => saveDraft());
 
@@ -515,6 +600,9 @@ function bindControls() {
 
   const deleteButton = $("delete-scheme");
   if (deleteButton) deleteButton.addEventListener("click", () => deleteSelected());
+
+  const exportButton = $("export-scheme");
+  if (exportButton) exportButton.addEventListener("click", () => exportScheme());
 
   const importButton = $("import-scheme");
   const importFile = $("import-file");
@@ -571,3 +659,7 @@ if (window && typeof window.addEventListener === "function") {
 
 bindControls();
 loadSettings();
+setInterval(() => {
+  refreshListenerTargets();
+  refreshModelChanges();
+}, 5000);

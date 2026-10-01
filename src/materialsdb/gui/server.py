@@ -554,18 +554,34 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         )
 
     def _model_restyle(self, store_, payload):
-        """Queue a style-only restyle of every material cached for the active model."""
-        model_path = _active_model_path(self.state) or self.state.last_model_path
-        if not model_path:
-            self._send(409, {"error": "no model connected"})
-            return
-        client_id = next(
-            (cid for cid, listener in self.state.listeners.items() if listener.get("model_path") == model_path),
-            None,
-        )
-        if client_id is None:
-            self._send(409, {"error": "no listener connected for the active model"})
-            return
+        """Queue a style-only restyle of every material cached for a model.
+
+        With an explicit ``client_id`` the named listener's model is targeted;
+        otherwise the active model (most recent listener, then last cached path)
+        keeps the historical behaviour."""
+        requested = str(payload.get("client_id") or "")
+        if requested:
+            listener = self.state.listeners.get(requested)
+            if listener is None:
+                self._send(404, {"error": f"unknown listener: {requested}"})
+                return
+            if not listener.get("model_path"):
+                self._send(409, {"error": "listener has no model connected"})
+                return
+            client_id = requested
+            model_path = listener["model_path"]
+        else:
+            model_path = _active_model_path(self.state) or self.state.last_model_path
+            if not model_path:
+                self._send(409, {"error": "no model connected"})
+                return
+            client_id = next(
+                (cid for cid, listener in self.state.listeners.items() if listener.get("model_path") == model_path),
+                None,
+            )
+            if client_id is None:
+                self._send(409, {"error": "no listener connected for the active model"})
+                return
         scheme = config.get_scheme() or schemes.DEFAULT_SCHEME
         entries, skipped = _restyle_plan(store_, model_path, scheme, config.get_ignore_producer_color())
         if entries:

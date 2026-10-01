@@ -1859,6 +1859,36 @@ def test_model_restyle_requires_listener(api):
     assert status == 409
 
 
+def test_model_restyle_targets_named_listener(api):
+    """An explicit client_id restyles that listener's model and only queues to it."""
+    server, state = api
+    empty = {"fingerprint": None, "scheme": None, "used_in": [], "layers": []}
+    _ingest_model(server, state, "/m/target-a.ifc", {M1: dict(empty)}, client_id="a")
+    _ingest_model(server, state, "/m/target-b.ifc", {M2: dict(empty)}, client_id="b")
+
+    status, body = request(server, "POST", "/api/model/restyle", payload={"client_id": "a"}, token=state.token)
+
+    assert status == 200
+    assert body["queued"] == 1
+    pending = state.listeners["a"]["pending"]
+    assert pending["action"] == "restyle"
+    assert [entry["material_id"] for entry in pending["materials"]] == [M1]
+    assert state.listeners["a"]["last_status"] == {"status": "pending", "detail": ""}
+    assert state.listeners["b"]["pending"] is None  # the other listener is untouched
+
+    status, body = request(server, "POST", "/api/model/restyle", payload={"client_id": "ghost"}, token=state.token)
+    assert status == 404
+    assert body["error"] == "unknown listener: ghost"
+
+    # a registered listener without a model cannot be targeted
+    request(
+        server, "POST", "/api/listener/register", payload={"client_id": "empty", "model_path": ""}, token=state.token
+    )
+    status, body = request(server, "POST", "/api/model/restyle", payload={"client_id": "empty"}, token=state.token)
+    assert status == 409
+    assert body["error"] == "listener has no model connected"
+
+
 def test_settings_page_and_script_are_served(api):
     server, state = api
     status, body = request(server, "GET", "/settings.html")
