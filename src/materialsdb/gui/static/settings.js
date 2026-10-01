@@ -175,7 +175,7 @@ function basename(path) {
 
 function applyListenerClients(clients) {
   // only listeners with a connected model are valid restyle targets
-  const targets = (clients || []).filter((client) => client && client.model_path);
+  const targets = (Array.isArray(clients) ? clients : []).filter((client) => client && client.model_path);
   const select = $("model-target");
   const row = $("model-target-row");
   const hidden = targets.length ? "" : "none";
@@ -412,7 +412,9 @@ async function exportScheme() {
     link.href = url;
     link.download = chosen;
     link.click();
-    URL.revokeObjectURL(url);
+    // defer the revoke: some Firefox versions cancel an in-flight download
+    // when the blob URL is revoked in the same task as the click
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     setText("editor-status", `exported ${chosen}`);
   } catch (err) {
     if (err && err.name === "AbortError") return; // picker cancelled: not an error

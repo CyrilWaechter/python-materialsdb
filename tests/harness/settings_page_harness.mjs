@@ -4,20 +4,23 @@
 //   (a) #scheme lists the server schemes and shows the effective scheme from
 //       GET /api/config;
 //   (b) changing a control posts the matching /api/config patch;
-//   (c) #model-target is populated from /api/listener/clients, apply-colours
-//       posts its client_id to /api/model/restyle and a stateful clients stub
-//       reports pending then applied, so the listener detail lands in
-//       #apply-status;
+//   (c) #model-target is populated from /api/listener/clients, keeps the
+//       selected client_id across a refresh, and apply-colours posts it to
+//       /api/model/restyle while a stateful clients stub reports pending then
+//       applied, so the listener detail lands in #apply-status;
 //   (d) without a model the button is disabled, the hint is visible and the
 //       model selector is hidden;
 //   (e) selecting a built-in loads all 17 editor rows as an editable draft
 //       with Save disabled and Save as enabled; editing Concrete re-renders
-//       the preview and save-as posts the edited palette under a new name;
+//       the preview and save-as posts the edited palette under a new name; a
+//       custom draft re-enables Save;
 //   (f) rename/delete post to the encoded /rename and /delete endpoints and
 //       importing an envelope shows the server's 409 conflict before a retry
 //       succeeds and selects the imported scheme;
 //   (g) export writes the current draft envelope through a stubbed
-//       window.showSaveFilePicker, under the name suggested from #scheme-name.
+//       window.showSaveFilePicker, under the name suggested from #scheme-name,
+//       while a cancelled picker (AbortError) and a cancelled prompt fallback
+//       stay quiet.
 // Usage: node settings_page_harness.mjs <path/to/settings.js>
 
 import fs from "node:fs";
@@ -89,6 +92,7 @@ let changesModelPath = "/m/x.ifc";
 let restyleCalls = 0;
 let restyleBody = null;
 let statusPolls = 0; // /api/listener/clients calls since the last restyle
+let malformedClients = false; // simulate a malformed 200 from the clients endpoint
 const posts = [];
 const schemePosts = [];
 const schemeList = [{ name: "Lesosai", builtin: true }, { name: "Mine", builtin: false }];
@@ -107,17 +111,18 @@ const schemeCategories = Object.fromEntries(CATEGORY_NAMES.map((name, index) => 
 
 // stateful listener stub: the first poll after a restyle is still pending, the
 // next one reports the applied detail (drives the 1 s post-apply poll)
+const SECOND_MODEL_PATH = "/m/y.ifc";
 function listenerClients() {
   if (!changesModelPath) return { clients: [] };
   const pending = restyleCalls > 0 && statusPolls <= 1;
+  const status = pending
+    ? { status: "pending", detail: "" }
+    : { status: "applied", detail: "3 material(s) restyled" };
   return {
-    clients: [{
-      client_id: "c1",
-      model_path: changesModelPath,
-      last_status: pending
-        ? { status: "pending", detail: "" }
-        : { status: "applied", detail: "3 material(s) restyled" },
-    }],
+    clients: [
+      { client_id: "c1", model_path: changesModelPath, last_status: status },
+      { client_id: "c2", model_path: SECOND_MODEL_PATH, last_status: status },
+    ],
   };
 }
 
@@ -180,6 +185,7 @@ async function fakeFetch(path, options = {}) {
   }
   if (path === "/api/listener/clients") {
     statusPolls += 1;
+    if (malformedClients) return json({ clients: { bogus: true } });
     return json(listenerClients());
   }
   throw new Error("unhandled fetch: " + path);
@@ -277,10 +283,36 @@ mark(
   targetHtml.includes('value="c1"') &&
     targetHtml.includes(">x.ifc<") &&
     targetHtml.includes('title="/m/x.ifc"') &&
-    modelSelect.value === "c1" &&
+    targetHtml.includes('value="c2"') &&
+    targetHtml.includes(">y.ifc<") &&
+    modelSelect.value === "c1" && // none selected yet: the first client wins
     modelRow.style.display !== "none",
   `html=${JSON.stringify(targetHtml)} value=${JSON.stringify(modelSelect.value)} row=${JSON.stringify(modelRow.style.display)}`,
 );
+
+// a refresh (5 s poll / loadSettings) must keep the user's selected target ---
+modelSelect.value = "c2";
+await S.__loadSettings();
+mark(
+  "target selection kept",
+  modelSelect.value === "c2" &&
+    modelSelect.innerHTML.includes('value="c1"') &&
+    modelSelect.innerHTML.includes('value="c2"'),
+  `value=${JSON.stringify(modelSelect.value)} html=${JSON.stringify(modelSelect.innerHTML)}`,
+);
+
+// a malformed 200 from /api/listener/clients must not break loadSettings -----
+malformedClients = true;
+let malformedThrew = false;
+try {
+  await S.__loadSettings();
+} catch {
+  malformedThrew = true;
+}
+malformedClients = false;
+mark("malformed clients tolerated", !malformedThrew, `threw=${malformedThrew}`);
+await S.__loadSettings(); // restore the two-client list
+modelSelect.value = "c2"; // re-select the target used by the apply exercise
 
 // (c) apply enabled with a model, restyle carries the target client_id, and
 // the stateful status poll reports pending then applied --------------------
@@ -297,7 +329,7 @@ mark(
 );
 mark(
   "restyle target",
-  JSON.stringify(restyleBody) === JSON.stringify({ client_id: "c1" }),
+  JSON.stringify(restyleBody) === JSON.stringify({ client_id: "c2" }),
   `body=${JSON.stringify(restyleBody)}`,
 );
 mark(
@@ -447,6 +479,11 @@ mark(
   `confirmCalls=${confirmCalls} value=${JSON.stringify(schemeSelect.value)} ` +
     `edited=${editedVisible()} switched=${previewChips.innerHTML.includes("#21578d")}`,
 );
+mark(
+  "custom draft buttons",
+  saveButton.disabled === false && saveAsButton.disabled === false,
+  `save=${saveButton.disabled} saveAs=${saveAsButton.disabled}`,
+);
 delete globalThis.window.confirm;
 
 // (g) export: a stubbed showSaveFilePicker receives the current draft --------
@@ -483,6 +520,33 @@ mark(
   `envelope=${JSON.stringify(exportEnvelope)} suggested=${JSON.stringify(exportCall && exportCall.options)}`,
 );
 delete globalThis.window.showSaveFilePicker;
+
+// a cancelled picker (AbortError) must stay quiet --------------------------
+const statusBeforeCancel = editorStatusBox.textContent;
+globalThis.window.showSaveFilePicker = async () => {
+  const err = new Error("picker cancelled");
+  err.name = "AbortError";
+  throw err;
+};
+S.__get("export-scheme").dispatch("click");
+await sleep(20);
+mark(
+  "export cancel quiet",
+  editorStatusBox.textContent === statusBeforeCancel && !editorStatusBox.textContent.includes("export failed"),
+  `status=${JSON.stringify(editorStatusBox.textContent)}`,
+);
+delete globalThis.window.showSaveFilePicker;
+
+// without the picker API, a cancelled prompt fallback is not an error either -
+globalThis.window.prompt = () => null;
+S.__get("export-scheme").dispatch("click");
+await sleep(20);
+mark(
+  "export prompt cancel quiet",
+  editorStatusBox.textContent === statusBeforeCancel && !editorStatusBox.textContent.includes("export failed"),
+  `status=${JSON.stringify(editorStatusBox.textContent)}`,
+);
+delete globalThis.window.prompt;
 
 // rename: posts {"new_name": "Better"} to the encoded /rename endpoint ------
 const renameButton = S.__get("rename-scheme");
