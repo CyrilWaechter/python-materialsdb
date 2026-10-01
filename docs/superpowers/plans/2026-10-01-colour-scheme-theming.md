@@ -906,6 +906,7 @@ git commit -m "feat(bonsai): style-only restyle action and recolour-on-reuse"
 
 **Files:**
 - Create: `src/materialsdb/gui/static/settings.html`
+- Create: `src/materialsdb/gui/static/settings.js` (minimal placeholder — Task 7 replaces its contents)
 - Modify: `src/materialsdb/gui/server.py` (do_GET static routes ~717–741)
 - Modify: `src/materialsdb/gui/static/index.html` (nav line 38, panel lines 39–42)
 - Modify: `src/materialsdb/gui/static/constructions.html` (nav line 32, panel lines 33–36)
@@ -939,6 +940,8 @@ Expected: FAIL (404).
 - [ ] **Step 3: Implement the page, routes and nav cleanup**
 
 Create `settings.html` mirroring `index.html`'s head/style/script layout (same nav CSS, token script `window.MATERIALSDB_TOKEN = "__TOKEN__"`, `<script src="/settings.js">`), with nav `Materials | Constructions | Settings` (Settings active) and three sections: **General** (language/country selects), **Colour scheme** (scheme select, override checkbox, apply button + status), **Palettes** (list, name field, clone/rename/delete/export/import controls, `palette-rows`, `preview-chips`, `preview-section`, save/save-as, status). Give every control the exact ID from the Interfaces block; use `style="display:none"`/`disabled` states as needed.
+
+Also create a minimal `settings.js` placeholder (header comment plus `const TOKEN = window.MATERIALSDB_TOKEN;` and an `api()` helper matching `app-constructions.js`) so the static route test below is meaningful; Task 7 replaces it with the real logic.
 
 In `server.py`'s do_GET, add branches mirroring `/constructions.html` and `/app-constructions.js` for `/settings.html` (replace `__TOKEN__`) and `/settings.js` (`text/javascript`).
 
