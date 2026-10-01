@@ -253,10 +253,7 @@ async function attachLayerChoices(layer) {
 async function initConfig() {
   try {
     const cfg = await api("/api/config");
-    const langEl = document.getElementById("lang");
-    const countryEl = document.getElementById("country");
-    if (langEl && cfg.lang) { langEl.value = cfg.lang; document.documentElement.lang = cfg.lang; }
-    if (countryEl && cfg.country) countryEl.value = cfg.country;
+    if (cfg.lang) document.documentElement.lang = cfg.lang;
   } catch {}
 }
 
@@ -558,11 +555,6 @@ $("reverse").onclick = () => {
   if (selectedRow !== -1) selectedRow = layers.length - 1 - selectedRow;
   renderLayers(); refreshU();
 };
-document.getElementById("settings-tab").addEventListener("click", (e) => {
-  e.preventDefault();
-  const p = document.getElementById("settings-panel");
-  p.style.display = p.style.display === "none" ? "block" : "none";
-});
 $("preset").onchange = () => { refreshU(); };
 $("design-usage").onchange = refreshU;
 $("save").onclick = async () => {
@@ -639,13 +631,6 @@ $("append-session").onclick = async () => {
   }
 };
 initConfig().then(() => loadList().then(() => { renderLayers(); renderContributions(); renderPreview(); }));
-document.getElementById("lang")?.addEventListener("change", async () => {
-  await api("/api/config", { method: "POST", body: JSON.stringify({ lang: $("lang").value }) });
-  document.documentElement.lang = $("lang").value;
-});
-document.getElementById("country")?.addEventListener("change", async () => {
-  await api("/api/config", { method: "POST", body: JSON.stringify({ country: $("country").value }) });
-});
 
 /* --- chooser: embedded full picker via iframe --- */
 function openChooser(onPick) {

@@ -1837,3 +1837,12 @@ def test_model_restyle_requires_listener(api):
     server, state = api
     status, _ = request(server, "POST", "/api/model/restyle", payload={}, token=state.token)
     assert status == 409
+
+
+def test_settings_page_and_script_are_served(api):
+    server, state = api
+    status, body = request(server, "GET", "/settings.html")
+    assert status == 200 and state.token.encode() in body and b"__TOKEN__" not in body
+    status, body, headers = request(server, "GET", "/settings.js", want_headers=True)
+    assert status == 200
+    assert headers["Content-Type"].startswith("text/javascript")

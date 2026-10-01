@@ -16,8 +16,6 @@ let lang = "en";
 if (isEmbed) {
   document.addEventListener("DOMContentLoaded", () => {
     document.querySelector(".top-tabs")?.remove();
-    const sp = document.getElementById("settings-panel");
-    if (sp) sp.remove();
   });
 }
 let sortKey = "company";
@@ -115,10 +113,6 @@ async function loadMaterials() {
   try {
     const cfg = await api("/api/config");
     lang = cfg.lang || lang;
-    const langEl = document.getElementById("lang");
-    if (langEl) langEl.value = lang;
-    const countryEl = document.getElementById("country");
-    if (countryEl && cfg.country) countryEl.value = cfg.country;
     document.documentElement.lang = lang;
   } catch {}
   const params = new URLSearchParams();
@@ -755,33 +749,10 @@ $("text").addEventListener("input", () => {
   debounceTimer = setTimeout(applyModel, 250);
 });
 
-$("lang").addEventListener("change", async () => {
-  lang = $("lang").value;
-  await api("/api/config", { method: "POST", body: JSON.stringify({ lang }) });
-  detailCache.clear();
-  await loadMaterials();
-  await syncUpdatesBanner();
-  await refreshModelChanges();
-});
-
-$("country").addEventListener("change", async () => {
-  await api("/api/config", { method: "POST", body: JSON.stringify({ country: $("country").value }) });
-  detailCache.clear();
-  await loadMaterials();
-  await syncUpdatesBanner();
-  await refreshModelChanges();
-});
-
 $("preview").onclick = async () => {
   if (!lastSelectedId) return setStatus("select a material first");
   openDrawer(await getDetail(lastSelectedId));
 };
-
-document.getElementById("settings-tab").addEventListener("click", (e) => {
-  e.preventDefault();
-  const p = document.getElementById("settings-panel");
-  p.style.display = p.style.display === "none" ? "block" : "none";
-});
 
 loadMaterials();
 syncUpdatesBanner();

@@ -778,6 +778,23 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 return
             self._send(200, content_type="text/javascript; charset=utf-8", raw=js.encode("utf-8"))
             return
+        if parsed.path == "/settings.html":
+            try:
+                html = (STATIC_DIR / "settings.html").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                self._send(404, {"error": "not found"})
+                return
+            html = html.replace("__TOKEN__", self.state.token)
+            self._send(200, content_type="text/html; charset=utf-8", raw=html.encode("utf-8"))
+            return
+        if parsed.path == "/settings.js":
+            try:
+                js = (STATIC_DIR / "settings.js").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                self._send(404, {"error": "not found"})
+                return
+            self._send(200, content_type="text/javascript; charset=utf-8", raw=js.encode("utf-8"))
+            return
         if parsed.path == "/picker-core.js":
             try:
                 js = (STATIC_DIR / "picker-core.js").read_text(encoding="utf-8")
