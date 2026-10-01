@@ -1148,6 +1148,7 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(new_name, str):
             self._send(400, {"error": "new_name must be a string"})
             return
+        new_name = new_name.strip()  # schemes.rename stores the stripped name; config must match
         try:
             schemes.rename(name, new_name)
         except schemes.SchemeError as err:

@@ -1696,6 +1696,40 @@ def test_scheme_api_crud_and_active_reset(api):
     assert request(server, "GET", "/api/config")[1]["scheme"] == "Lesosai"
 
 
+def test_scheme_api_rename_trims_active_name(api):
+    """A padded rename must keep config.json pointing at the stored name;
+    otherwise the active scheme dangles and later follow/reset can never
+    repair it (config.get_scheme() == name never matches again)."""
+    server, state = api
+    payload = {"categories": _custom_palette()}
+    assert request(server, "POST", "/api/schemes/Mon%20Palett%C3%A9", payload=payload, token=state.token)[0] == 200
+    assert request(server, "POST", "/api/config", payload={"scheme": "Mon Paletté"}, token=state.token)[0] == 200
+
+    status, _ = request(
+        server,
+        "POST",
+        "/api/schemes/Mon%20Palett%C3%A9/rename",
+        payload={"new_name": " Palette 2 "},
+        token=state.token,
+    )
+    assert status == 200
+
+    body = request(server, "GET", "/api/config")[1]
+    names = [item["name"] for item in request(server, "GET", "/api/schemes")[1]["schemes"]]
+    assert body["scheme"] == "Palette 2"
+    assert body["scheme"] in names
+
+    # the stored name is the active one: further rename/delete still follow/reset
+    status, _ = request(
+        server, "POST", "/api/schemes/Palette%202/rename", payload={"new_name": "Palette 3"}, token=state.token
+    )
+    assert status == 200
+    assert request(server, "GET", "/api/config")[1]["scheme"] == "Palette 3"
+
+    assert request(server, "POST", "/api/schemes/Palette%203/delete", payload={}, token=state.token)[0] == 200
+    assert request(server, "GET", "/api/config")[1]["scheme"] == "Lesosai"
+
+
 def test_scheme_api_rejects_builtin_and_invalid(api):
     server, state = api
     assert (
