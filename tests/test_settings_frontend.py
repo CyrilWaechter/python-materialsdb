@@ -7,7 +7,9 @@ config patch, and apply-colours calls ``/api/model/restyle`` and reports the
 queued count plus the listener's applied detail. Without a connected model the
 button is disabled and the hint is shown. The palette editor core is covered
 too: cloning renders all 17 rows, an input event re-renders the live preview
-and save-as posts the edited palette under the encoded name.
+and save-as posts the edited palette under the encoded name. Finally rename and
+delete post to their encoded endpoints, export renders the unauthenticated GET
+anchor, and importing surfaces the 409 conflict before the retry succeeds.
 
 Skipped automatically when node is unavailable."""
 
@@ -51,3 +53,8 @@ def test_settings_page_scheme_and_apply_colours():
     assert "editor rows: OK" in result.stdout
     assert "preview: OK" in result.stdout
     assert "save payload: OK" in result.stdout
+    assert "rename: OK" in result.stdout
+    assert "delete: OK" in result.stdout
+    assert "export: OK" in result.stdout
+    assert "import conflict: OK" in result.stdout
+    assert "import success: OK" in result.stdout

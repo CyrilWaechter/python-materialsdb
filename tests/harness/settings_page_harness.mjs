@@ -8,7 +8,10 @@
 //       /api/model/restyle and reports the queued count + listener detail;
 //   (d) without a model it is disabled and the hint is visible;
 //   (e) cloning renders all 17 editor rows, editing Concrete re-renders the
-//       preview and save-as posts the edited palette under the encoded name.
+//       preview and save-as posts the edited palette under the encoded name;
+//   (f) rename/delete post to the encoded /rename and /delete endpoints, the
+//       export button renders the GET anchor, and importing an envelope shows
+//       the server's 409 conflict before a retry succeeds and selects it.
 // Usage: node settings_page_harness.mjs <path/to/settings.js>
 
 import fs from "node:fs";
@@ -95,6 +98,8 @@ const schemeCategories = Object.fromEntries(CATEGORY_NAMES.map((name, index) => 
 ]));
 async function fakeFetch(path, options = {}) {
   const json = (data) => new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } });
+  const fail = (status, message) =>
+    new Response(JSON.stringify({ error: message }), { status, headers: { "Content-Type": "application/json" } });
   if (path === "/api/config" && (!options.method || options.method === "GET")) return json(config);
   if (path === "/api/config") {
     posts.push(JSON.parse(options.body));
@@ -102,6 +107,34 @@ async function fakeFetch(path, options = {}) {
     return json({ ok: true });
   }
   if (path === "/api/schemes") return json({ schemes: schemeList, error: null });
+  // Task 9 routes: must precede the generic POST branch, which would otherwise
+  // swallow them as a scheme named "Mine/rename" and so on.
+  if (path === "/api/schemes/import" && options.method === "POST") {
+    const body = JSON.parse(options.body);
+    schemePosts.push({ name: body && body.name, path, body });
+    if (body && body.name === "Lesosai") return fail(409, "a scheme named 'Lesosai' already exists");
+    if (!schemeList.some((entry) => entry.name === body.name)) schemeList.push({ name: body.name, builtin: false });
+    return json({ name: body.name });
+  }
+  if (path.endsWith("/rename") && options.method === "POST") {
+    const name = decodeURIComponent(path.slice("/api/schemes/".length, -"/rename".length));
+    const body = JSON.parse(options.body);
+    schemePosts.push({ name, path, body });
+    const entry = schemeList.find((candidate) => candidate.name === name);
+    if (!entry || entry.builtin) return fail(400, `no custom scheme named '${name}'`);
+    entry.name = body.new_name;
+    if (config.scheme === name) config.scheme = body.new_name;
+    return json({ ok: true });
+  }
+  if (path.endsWith("/delete") && options.method === "POST") {
+    const name = decodeURIComponent(path.slice("/api/schemes/".length, -"/delete".length));
+    schemePosts.push({ name, path, body: options.body ? JSON.parse(options.body) : {} });
+    const index = schemeList.findIndex((candidate) => candidate.name === name && !candidate.builtin);
+    if (index < 0) return fail(404, `unknown scheme: ${name}`);
+    schemeList.splice(index, 1);
+    if (config.scheme === name) config.scheme = "Lesosai";
+    return json({ ok: true });
+  }
   if (path.startsWith("/api/schemes/") && options.method === "POST") {
     const name = decodeURIComponent(path.slice("/api/schemes/".length));
     const body = JSON.parse(options.body);
@@ -278,6 +311,86 @@ mark(
   "save payload",
   !!savedPost && savedPost.path === "/api/schemes/Studio%20Palette" && categoryCount === 17 && savedColour && listRefreshed,
   `post=${JSON.stringify(savedPost)} categories=${categoryCount} colour=${JSON.stringify(savedConcrete)} refreshed=${listRefreshed}`,
+);
+
+// (f) export: the selected custom scheme renders the download anchor -------
+await S.__selectScheme("Mine");
+const exportButton = S.__get("export-scheme");
+exportButton.dispatch("click");
+await sleep(20);
+const exportHtml = exportButton.innerHTML;
+mark(
+  "export",
+  exportHtml.includes('href="/api/schemes/Mine/export"') && exportHtml.includes('download="Mine.json"'),
+  `html=${JSON.stringify(exportHtml)}`,
+);
+
+// rename: posts {"new_name": "Better"} to the encoded /rename endpoint ------
+const renameButton = S.__get("rename-scheme");
+nameField.value = "Better";
+renameButton.dispatch("click");
+await sleep(50);
+const renamePost = schemePosts.find((entry) => entry.path === "/api/schemes/Mine/rename");
+const renameListed = S.__get("scheme").innerHTML.includes("Better");
+mark(
+  "rename",
+  !!renamePost && JSON.stringify(renamePost.body) === JSON.stringify({ new_name: "Better" }) && renameListed,
+  `post=${JSON.stringify(renamePost)} listed=${renameListed}`,
+);
+
+// put Mine back so the delete exercise starts from a known custom scheme ----
+const renamedEntry = schemeList.find((entry) => entry.name === "Better");
+if (renamedEntry) renamedEntry.name = "Mine";
+config.scheme = "Mine";
+await S.__loadSettings();
+
+// delete: posts to the encoded /delete endpoint, then falls back ------------
+const deleteButton = S.__get("delete-scheme");
+deleteButton.dispatch("click");
+await sleep(50);
+const deletePost = schemePosts.find((entry) => entry.path === "/api/schemes/Mine/delete");
+const selectAfterDelete = S.__get("scheme");
+mark(
+  "delete",
+  !!deletePost && selectAfterDelete.value === "Lesosai" && !selectAfterDelete.innerHTML.includes("Mine"),
+  `post=${JSON.stringify(deletePost)} value=${JSON.stringify(selectAfterDelete.value)} html=${JSON.stringify(selectAfterDelete.innerHTML)}`,
+);
+
+// import: choosing a file that conflicts with a built-in shows the 409 ------
+const importFile = S.__get("import-file");
+const importButton = S.__get("import-scheme");
+const importLabel = S.__get("import-name-label");
+const importName = S.__get("import-name");
+const editorStatus = S.__get("editor-status");
+const importEnvelope = { format: "materialsdb-scheme/1", name: "Lesosai", categories: schemeCategories };
+importFile.files = [{ name: "p.json", text: async () => JSON.stringify(importEnvelope) }];
+importFile.dispatch("change");
+await sleep(50);
+const conflictPost = schemePosts.find((entry) => entry.path === "/api/schemes/import" && entry.body && entry.body.name === "Lesosai");
+mark(
+  "import conflict",
+  !!conflictPost &&
+    editorStatus.textContent.includes("already exists") &&
+    importLabel.style.display === "" &&
+    importName.value === "Lesosai",
+  `post=${JSON.stringify(conflictPost)} status=${JSON.stringify(editorStatus.textContent)} ` +
+    `label=${JSON.stringify(importLabel.style.display)} name=${JSON.stringify(importName.value)}`,
+);
+
+// the still-editable #import-name resolves the conflict on the retry --------
+importName.value = "Imported Palette";
+importButton.dispatch("click");
+await sleep(60);
+const importPost = schemePosts.find((entry) => entry.path === "/api/schemes/import" && entry.body && entry.body.name === "Imported Palette");
+const selectAfterImport = S.__get("scheme");
+mark(
+  "import success",
+  !!importPost &&
+    selectAfterImport.value === "Imported Palette" &&
+    selectAfterImport.innerHTML.includes("Imported Palette") &&
+    importLabel.style.display === "none",
+  `post=${JSON.stringify(importPost)} value=${JSON.stringify(selectAfterImport.value)} ` +
+    `html=${JSON.stringify(selectAfterImport.innerHTML)} label=${JSON.stringify(importLabel.style.display)}`,
 );
 
 if (failures.length) {

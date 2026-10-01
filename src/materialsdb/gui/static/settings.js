@@ -1,19 +1,20 @@
 // materialsdb settings page: general options, colour scheme and palette editor.
-// The palette rename/delete/export/import actions are added by a later task;
-// this file owns the shared API helper plus the general/colour-scheme controls,
-// the scheme list, the editor core (clone/edit/preview/save) and the
-// apply-to-model action.
+// Owns the shared API helper plus the general/colour-scheme controls, the
+// scheme list, the editor core (clone/edit/preview/save) and the palette list
+// actions (rename/delete/export/import).
 const TOKEN = window.MATERIALSDB_TOKEN;
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 
 const PREVIEW_SAMPLES = ["Render", "Masonry", "Insulation", "Wood_Timberproducts", "Concrete"];
+const SCHEME_FORMAT = "materialsdb-scheme/1";
 
 let schemesList = [];     // [{name, builtin}] from GET /api/schemes
 let activeScheme = null;  // effective scheme, from GET /api/config
 let modelPath = null;     // active model path, from GET /api/model/changes
 let draft = null;         // palette being edited: {name, categories, builtin, dirty}
+let pendingImport = null; // parsed import envelope waiting for a free name
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -77,9 +78,24 @@ function updateEditorButtons() {
   const save = $("save-scheme");
   const saveAs = $("save-as-scheme");
   const clone = $("clone-scheme");
+  const rename = $("rename-scheme");
+  const remove = $("delete-scheme");
   if (save) save.disabled = !(draft && !draft.builtin);
   if (saveAs) saveAs.disabled = !draft;
   if (clone) clone.disabled = !activeScheme;
+  const custom = !!activeScheme && !schemeIsBuiltin(activeScheme);
+  if (rename) rename.disabled = !custom;
+  if (remove) remove.disabled = !custom;
+}
+
+function schemeIsBuiltin(name) {
+  const entry = schemesList.find((scheme) => scheme.name === name);
+  return !entry || !!entry.builtin;
+}
+
+function clearExportLink() {
+  const target = $("export-scheme");
+  if (target) target.innerHTML = "export";
 }
 
 function renderEditor() {
@@ -188,6 +204,7 @@ async function refreshSchemeState() {
   populateSchemeSelect();
   renderSchemeList();
   updateEditorButtons();
+  clearExportLink();
 }
 
 async function selectScheme(name) {
@@ -196,6 +213,7 @@ async function selectScheme(name) {
   const select = $("scheme");
   if (select) select.value = name;
   renderSchemeList();
+  clearExportLink();
   try {
     await saveConfig({ scheme: name });
   } catch (err) {
@@ -262,6 +280,123 @@ async function saveDraft(asNewName) {
     }
   }
   await refreshSchemeState();
+}
+
+async function renameSelected() {
+  const oldName = activeScheme;
+  if (!oldName) {
+    setText("editor-status", "select a scheme to rename");
+    return;
+  }
+  if (schemeIsBuiltin(oldName)) {
+    setText("editor-status", `built-in scheme ${oldName} cannot be renamed`);
+    return;
+  }
+  const field = $("scheme-name");
+  const newName = field ? field.value.trim() : "";
+  if (!newName) {
+    setText("editor-status", "enter a scheme name first");
+    return;
+  }
+  if (newName === oldName) {
+    setText("editor-status", `scheme is already named ${newName}`);
+    return;
+  }
+  try {
+    await api(`/api/schemes/${encodeURIComponent(oldName)}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ new_name: newName }),
+    });
+  } catch (err) {
+    setText("editor-status", err.message);
+    return;
+  }
+  await refreshSchemeState();
+  await loadDraft(activeScheme);
+  setText("editor-status", `renamed ${oldName} to ${newName}`);
+}
+
+async function deleteSelected() {
+  const name = activeScheme;
+  if (!name) {
+    setText("editor-status", "select a scheme to delete");
+    return;
+  }
+  if (schemeIsBuiltin(name)) {
+    setText("editor-status", `built-in scheme ${name} cannot be deleted`);
+    return;
+  }
+  try {
+    await api(`/api/schemes/${encodeURIComponent(name)}/delete`, { method: "POST", body: "{}" });
+  } catch (err) {
+    setText("editor-status", err.message);
+    return;
+  }
+  await refreshSchemeState();
+  await loadDraft(activeScheme);
+  setText("editor-status", `deleted ${name}`);
+}
+
+function exportSelected() {
+  const name = activeScheme;
+  if (!name) {
+    setText("editor-status", "select a scheme to export");
+    return;
+  }
+  const target = $("export-scheme");
+  if (!target) return;
+  // the GET export is not token-gated, so a plain download anchor works
+  const href = `/api/schemes/${encodeURIComponent(name)}/export`;
+  target.innerHTML = `<a href="${esc(href)}" download="${esc(name)}.json">download ${esc(name)}.json</a>`;
+}
+
+function resetImportFile() {
+  const file = $("import-file");
+  if (file) file.value = "";
+}
+
+async function postImport(name) {
+  if (!pendingImport) return;
+  const envelope = { ...pendingImport, name };
+  try {
+    const result = await api("/api/schemes/import", { method: "POST", body: JSON.stringify(envelope) });
+    const imported = (result && result.name) || name;
+    pendingImport = null;
+    const label = $("import-name-label");
+    if (label) label.style.display = "none";
+    const nameField = $("import-name");
+    if (nameField) nameField.value = "";
+    resetImportFile();
+    setText("editor-status", `imported ${imported}`);
+    await refreshSchemeState();
+    await selectScheme(imported);
+  } catch (err) {
+    // 409 (name taken): the wrapper stays visible so the name can be edited and retried
+    setText("editor-status", `import failed: ${err.message} — edit the name and press import again`);
+  }
+}
+
+async function importPalette(file) {
+  if (!file) return;
+  let envelope;
+  try {
+    envelope = JSON.parse(await file.text());
+  } catch (err) {
+    setText("editor-status", `import failed: not valid JSON (${err.message})`);
+    resetImportFile();
+    return;
+  }
+  if (!envelope || envelope.format !== SCHEME_FORMAT) {
+    setText("editor-status", `import failed: expected a ${SCHEME_FORMAT} payload`);
+    resetImportFile();
+    return;
+  }
+  pendingImport = envelope;
+  const nameField = $("import-name");
+  if (nameField) nameField.value = String(envelope.name ?? "");
+  const label = $("import-name-label");
+  if (label) label.style.display = "";
+  await postImport(nameField ? nameField.value.trim() : "");
 }
 
 async function loadSettings() {
@@ -356,6 +491,46 @@ function bindControls() {
         return;
       }
       saveDraft(name);
+    });
+  }
+
+  const renameButton = $("rename-scheme");
+  if (renameButton) renameButton.addEventListener("click", () => renameSelected());
+
+  const deleteButton = $("delete-scheme");
+  if (deleteButton) deleteButton.addEventListener("click", () => deleteSelected());
+
+  const exportButton = $("export-scheme");
+  if (exportButton) {
+    exportButton.addEventListener("click", (event) => {
+      const target = event && event.target;
+      // a click on the rendered download anchor must act, not re-render it
+      if (target && typeof target.closest === "function" && target.closest("a")) return;
+      exportSelected();
+    });
+  }
+
+  const importButton = $("import-scheme");
+  const importFile = $("import-file");
+  if (importButton) {
+    importButton.addEventListener("click", () => {
+      if (pendingImport) {
+        const field = $("import-name");
+        const name = field ? field.value.trim() : "";
+        if (!name) {
+          setText("editor-status", "enter a scheme name first");
+          return;
+        }
+        postImport(name);
+        return;
+      }
+      if (importFile && typeof importFile.click === "function") importFile.click();
+    });
+  }
+  if (importFile) {
+    importFile.addEventListener("change", () => {
+      const file = importFile.files && importFile.files[0];
+      if (file) importPalette(file);
     });
   }
 
