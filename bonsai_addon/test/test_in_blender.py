@@ -548,8 +548,10 @@ def test_material_update_preserves_guid_and_resends_model_map(tmp_path):
             cache_dir, MATERIAL_ID, [(b'lambda_value="0.036"', b'lambda_value="0.06"')]
         )
 
-        # re-push just that layer, opted into the in-place update mapping
-        push({"id": MATERIAL_ID, "layer_ids": [LAYER_A1], "mode": "update", "update": {LAYER_A1: LAYER_A1}})
+        # re-push just that layer, opted into the in-place update mapping. The
+        # mapping is keyed by the model-layer key the server emits: the target
+        # IfcMaterial's STEP id (entity_id), not the org_layer GUID.
+        push({"id": MATERIAL_ID, "layer_ids": [LAYER_A1], "mode": "update", "update": {str(entity_id): LAYER_A1}})
 
         sent = []
         original_send_model_map = client.send_model_map
