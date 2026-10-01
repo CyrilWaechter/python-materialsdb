@@ -2,44 +2,17 @@
 
 import json
 from pathlib import Path
-from typing import TypedDict
 
-from materialsdb import config, utils
+from materialsdb import config, schemes, utils
+from materialsdb.schemes import CategoryStyle
 
 MATERIALSDB_PSET = "materialsdb"
 
-
-class CategoryStyle(TypedDict):
-    """One palette entry. `hatch` is reserved for future pattern support."""
-
-    hatch: str
-    color: tuple[int, int, int]
-
-
-CATEGORIES: dict[str, CategoryStyle] = {
-    "Others": {"hatch": "", "color": (255, 255, 255)},
-    "Water_Proof": {"hatch": "", "color": (255, 255, 255)},
-    "Vapour_Proof": {"hatch": "", "color": (0, 0, 0)},
-    "Concrete": {"hatch": "", "color": (0, 255, 0)},
-    "Wood_Timberproducts": {"hatch": "", "color": (91, 60, 17)},
-    "Insulation": {"hatch": "", "color": (253, 108, 158)},
-    "Masonry": {"hatch": "", "color": (253, 70, 38)},
-    "Metal": {"hatch": "", "color": (119, 181, 254)},
-    "Mortar": {"hatch": "", "color": (102, 0, 153)},
-    "Plastics": {"hatch": "", "color": (96, 96, 96)},
-    "Stone": {"hatch": "", "color": (0, 0, 255)},
-    "Composite": {"hatch": "", "color": (112, 141, 35)},
-    "Films": {"hatch": "", "color": (0, 0, 0)},
-    "Render": {"hatch": "", "color": (0, 0, 0)},
-    "Covering": {"hatch": "", "color": (0, 0, 0)},
-    "Glas": {"hatch": "", "color": (27, 79, 8)},
-    "Soil": {"hatch": "", "color": (142, 84, 52)},
-}
-
-# Named colour schemes: a category -> palette. Only the default ships today;
-# more schemes (and a GUI selector) are planned.
-SCHEMES: dict[str, dict[str, CategoryStyle]] = {"Lesosai": CATEGORIES}
-DEFAULT_SCHEME = "Lesosai"
+# Named colour schemes live in materialsdb.schemes; re-exported here because
+# project_library and external code import them from material_builder.
+CATEGORIES = schemes.CATEGORIES
+SCHEMES: dict[str, dict[str, CategoryStyle]] = schemes.BUILTIN
+DEFAULT_SCHEME = schemes.DEFAULT_SCHEME
 
 
 def _rgb_int_components(color: int) -> tuple[float, float, float]:

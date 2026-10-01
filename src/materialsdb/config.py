@@ -50,6 +50,23 @@ def set_country(country: str):
     set_param("country", country)
 
 
+def get_scheme() -> str:
+    return str(get_base_config().get("scheme") or "")
+
+
+def set_scheme(name: str) -> None:
+    set_param("scheme", str(name))
+
+
+def get_ignore_producer_color() -> bool:
+    value = get_base_config().get("ignore_producer_color", "false")
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
+def set_ignore_producer_color(value: bool) -> None:
+    set_param("ignore_producer_color", "true" if value else "false")
+
+
 def main():
     lang = get_lang()
     set_lang(lang)
