@@ -735,3 +735,66 @@ def test_style_swap_retargets_loaded_object_slots():
     assert isinstance(new_material, bpy.types.Material)
     assert mesh.materials[0] is new_material  # slot retargeted to the new style
     assert tuple(round(c * 255) for c in new_material.diffuse_color[:3]) == (0, 255, 0)
+
+
+def test_construction_push_reloads_existing_instances(tmp_path):
+    """Rebuilding a type's layer set in place must reload the occurrences'
+    representations from IFC: their mesh material slots otherwise keep the
+    pre-push materials and the model shows the old colours (reproduced on a
+    local typed model with four IfcWall instances)."""
+    import bpy
+
+    model = Path("/home/cyril/git/BIMxBEM/TestFiles/IfcRelSpaceBoundary2ndLevel/Triangle_BB_IFC4.ifczip")
+    if not model.exists():
+        pytest.skip("local Triangle_BB model not available")
+
+    server = None
+    old_cache_env = None
+    try:
+        bpy.ops.bim.load_project(filepath=str(model), should_start_fresh_session=True)
+        file = tool.Ifc.get()
+        walls = [
+            obj
+            for obj in bpy.data.objects
+            if (element := tool.Ifc.get_entity(obj)) is not None and element.is_a("IfcWall")
+        ]
+        assert walls
+        assert all("Unknown" in [m.name for m in obj.data.materials if m] for obj in walls)
+
+        server, _cache, info, old_cache_env = _seeded_server(tmp_path)
+        port, token = info["port"], info["token"]
+        client = ListenerClient()
+        client.register(bonsai_addon._model_path())
+        status, body = _request(
+            port,
+            token,
+            "POST",
+            "/api/listener/send",
+            {
+                "client_id": client.client_id,
+                "action": "add_construction",
+                "construction": {
+                    "name": "WAL300",
+                    "design_usage": "consDesignForWall",
+                    "layers": [
+                        {"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.22},
+                        {"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15},
+                    ],
+                },
+            },
+        )
+        assert status == 200, body
+        previous = bonsai_addon._CLIENT
+        bonsai_addon._CLIENT = client
+        try:
+            assert bonsai_addon._poll_timer() == 1.0
+        finally:
+            bonsai_addon._CLIENT = previous
+
+        for obj in walls:
+            names = [m.name for m in obj.data.materials if m]
+            assert "color 16711680" in names, (obj.name, names)
+            assert "category Concrete" in names, (obj.name, names)
+    finally:
+        if server is not None:
+            _stop_server(server, old_cache_env)

@@ -62,6 +62,7 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
             _link_pushed_types(tool.Ifc.get(), payload["construction"])
             _sync_style_materials(tool.Ifc.get())
             _retarget_style_materials(tool.Ifc.get(), result.get("style_swaps"))
+            _reload_construction_instances(tool.Ifc.get(), payload["construction"])
             report = (
                 f"{result['types_created']} type(s) created, {result['sets_updated']} set(s) updated, "
                 f"{result['materials_created']} material(s) created, "
@@ -166,6 +167,33 @@ def _sync_style_materials(file):
             tool.Style.switch_shading(blender_material, "Shading")
         except Exception:  # noqa: BLE001, S110 - cosmetic; never fail the push
             pass
+
+
+def _reload_construction_instances(file, construction):
+    """Reload the occurrences of a pushed construction's types from IFC.
+
+    `apply_add_construction` rebuilds an existing type's layer set in place, so
+    the occurrences' Blender meshes keep their old material slots until
+    reloaded. New types have no occurrences yet."""
+    name = str(construction.get("name") or "")
+    objects = []
+    for cls in construction.get("types") or []:
+        for target in file.by_type(cls):
+            if target.Name != name:
+                continue
+            for rel in file.get_inverse(target):
+                if not rel.is_a("IfcRelDefinesByType"):
+                    continue
+                for element in rel.RelatedObjects or ():
+                    obj = tool.Ifc.get_object(element)
+                    if obj is not None:
+                        objects.append(obj)
+    if not objects:
+        return
+    try:
+        tool.Geometry.reload_representation(objects)
+    except Exception:  # noqa: BLE001, S110 - cosmetic; never fail the push
+        pass
 
 
 def _retarget_style_materials(file, swaps):
