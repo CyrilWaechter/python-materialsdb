@@ -54,12 +54,14 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
             summary = {}
             count = insert.apply_add_materials(tool.Ifc.get(), payload, summary=summary)
             _sync_style_materials(tool.Ifc.get())
+            _retarget_style_materials(tool.Ifc.get(), summary.get("style_swaps"))
             _CLIENT.report("applied", _safety_net(f"{count} material(s) added", summary))
             _send_model_map()
         elif action == "add_construction":
             result = insert.apply_add_construction(tool.Ifc.get(), payload)
             _link_pushed_types(tool.Ifc.get(), payload["construction"])
             _sync_style_materials(tool.Ifc.get())
+            _retarget_style_materials(tool.Ifc.get(), result.get("style_swaps"))
             report = (
                 f"{result['types_created']} type(s) created, {result['sets_updated']} set(s) updated, "
                 f"{result['materials_created']} material(s) created, "
@@ -72,6 +74,7 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
             summary = {}
             count = insert.apply_restyle(tool.Ifc.get(), payload, summary=summary)
             _sync_style_materials(tool.Ifc.get())
+            _retarget_style_materials(tool.Ifc.get(), summary.get("style_swaps"))
             detail = f"{count} material(s) restyled"
             kept, missing = sorted(set(summary["kept_styles"])), sorted(set(summary["missing"]))
             if kept:
@@ -163,6 +166,28 @@ def _sync_style_materials(file):
             tool.Style.switch_shading(blender_material, "Shading")
         except Exception:  # noqa: BLE001, S110 - cosmetic; never fail the push
             pass
+
+
+def _retarget_style_materials(file, swaps):
+    """Repoint loaded objects from a superseded style's Blender material to its
+    replacement's. Bonsai copies ``tool.Ifc.get_object(style)`` into mesh/curve
+    slots at load time, so swapping a material to a different style entity
+    otherwise leaves the viewport on the old colour even though the IFC is
+    correct. Only swaps whose old style is no longer used by any IfcMaterial are
+    recorded, so a still-shared style is never hijacked."""
+    for old_style, new_style in swaps or ():
+        old_material = tool.Ifc.get_object(old_style)
+        new_material = tool.Ifc.get_object(new_style)
+        if old_material is None or new_material is None or old_material is new_material:
+            continue
+        for obj in bpy.data.objects:
+            data = getattr(obj, "data", None)
+            materials = getattr(data, "materials", None)
+            if not materials:
+                continue
+            for index, material in enumerate(materials):
+                if material is old_material:
+                    materials[index] = new_material
 
 
 def _poll_timer():

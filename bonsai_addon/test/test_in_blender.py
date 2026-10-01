@@ -3,6 +3,7 @@
 Run: pytest bonsai_addon/test/test_in_blender.py -q  (pytest-blender active)
 Local-only: CI runners have no Blender/Bonsai."""
 
+import copy
 import hashlib
 import http.client
 import json
@@ -634,7 +635,7 @@ def test_construction_resend_repaints_displayed_style(tmp_path):
     server = None
     old_cache_env = None
     try:
-        server, cache_dir, info, old_cache_env = _seeded_server(tmp_path)
+        server, _cache_dir, info, old_cache_env = _seeded_server(tmp_path)
         port, token = info["port"], info["token"]
         client = ListenerClient()
         client.register(bonsai_addon._model_path())
@@ -695,3 +696,42 @@ def test_construction_resend_repaints_displayed_style(tmp_path):
     finally:
         if server is not None:
             _stop_server(server, old_cache_env)
+
+
+def test_style_swap_retargets_loaded_object_slots():
+    """A material switched to a DIFFERENT style entity must retarget loaded
+    Blender objects that still reference the old style's material: Bonsai copies
+    the style's Blender material into mesh slots at load time, so an in-place
+    recolour shows up but a style swap leaves the viewport on the old colour."""
+    import bpy
+
+    file = tool.Ifc.get()
+    assert file is not None
+    summary = {}
+    assert insert.apply_add_materials(file, PAYLOAD, summary=summary) == 2
+    bonsai_addon._sync_style_materials(file)
+
+    old_style = next(s for s in file.by_type("IfcSurfaceStyle") if s.Name == "color 16711680")
+    old_material = tool.Ifc.get_object(old_style)
+    assert isinstance(old_material, bpy.types.Material)
+
+    mesh = bpy.data.meshes.new("Mur charg\u00e9")
+    obj = bpy.data.objects.new("Mur charg\u00e9", mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    mesh.materials.append(old_material)  # emulate a wall loaded before the swap
+
+    changed = copy.deepcopy(PAYLOAD)
+    for entry in changed["materials"]:
+        entry["color"] = None
+        entry["style_name"] = "category Insulation"
+        entry["style_color"] = [0.0, 1.0, 0.0]
+    swapped = {}
+    insert.apply_add_materials(file, changed, summary=swapped)
+    bonsai_addon._sync_style_materials(file)
+    bonsai_addon._retarget_style_materials(file, swapped.get("style_swaps") or [])
+
+    new_style = next(s for s in file.by_type("IfcSurfaceStyle") if s.Name == "category Insulation")
+    new_material = tool.Ifc.get_object(new_style)
+    assert isinstance(new_material, bpy.types.Material)
+    assert mesh.materials[0] is new_material  # slot retargeted to the new style
+    assert tuple(round(c * 255) for c in new_material.diffuse_color[:3]) == (0, 255, 0)

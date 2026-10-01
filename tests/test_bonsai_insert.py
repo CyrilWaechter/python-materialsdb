@@ -309,6 +309,28 @@ def test_apply_updates_our_style_on_colour_change(store):
     assert styled_item.Styles[0].Name == "color 255"  # our style refreshed
 
 
+def test_apply_style_records_superseded_style_swap(store):
+    """Switching a material to a different style entity records the superseded
+    pair so the Blender layer can repoint loaded objects still using it."""
+    file = _file_with_body_context()
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+
+    changed = copy.deepcopy(payload)
+    for entry in changed["materials"]:
+        entry["color"] = None
+        entry["style_name"] = "category Insulation"
+        entry["style_color"] = [0.0, 1.0, 0.0]
+    summary = {}
+    apply_add_materials(file, changed, summary=summary)
+
+    swaps = summary["style_swaps"]
+    assert swaps
+    old_style, new_style = swaps[0]
+    assert old_style.Name == "color 16711680"
+    assert new_style.Name == "category Insulation"
+
+
 def test_apply_styling_idempotent(store):
     file = _file_with_body_context()
     payload = _payload(store)
@@ -771,6 +793,7 @@ def test_construction_creates_type_and_layers():
         "update_missing": [],
         "changed_skipped": [],
         "replace_failed": [],
+        "style_swaps": [],
         "psets_written": 0,
     }
     types = file.by_type("IfcWallType")
@@ -971,6 +994,7 @@ def test_construction_resend_updates_same_set():
         "update_missing": [],
         "changed_skipped": [],
         "replace_failed": [],
+        "style_swaps": [],
         "psets_written": 0,
     }
     assert len(file.by_type("IfcWallType")) == 1  # no duplicate type

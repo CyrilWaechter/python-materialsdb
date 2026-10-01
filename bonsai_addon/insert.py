@@ -70,6 +70,7 @@ def apply_restyle(file, payload, summary=None) -> int:
         summary = {}
     summary.setdefault("kept_styles", [])
     summary.setdefault("missing", [])
+    swaps = summary.setdefault("style_swaps", [])
     by_id = _all_materials_by_id(file)
     restyled = 0
     for entry in payload.get("materials") or []:
@@ -82,7 +83,7 @@ def apply_restyle(file, payload, summary=None) -> int:
             if not _should_style(material):
                 summary["kept_styles"].append(material_id)
                 continue
-            _apply_style(file, entry, material)
+            _apply_style(file, entry, material, swaps)
             restyled += 1
     return restyled
 
@@ -179,7 +180,7 @@ def _entry_thickness(entry) -> float | None:
     return float(thickness) if thickness is not None else None
 
 
-def _refresh_material(file, entry, material) -> None:
+def _refresh_material(file, entry, material, swaps=None) -> None:
     """Replace our psets/attributes on an existing IfcMaterial in place."""
     _purge_our_psets(file, material)
     _add_identity_pset(file, material, entry["identity"])
@@ -188,7 +189,7 @@ def _refresh_material(file, entry, material) -> None:
     material.Description = str(entry.get("description") or "")
     material.Category = str(entry.get("category") or "")
     if _should_style(material):
-        _apply_style(file, entry, material)
+        _apply_style(file, entry, material, swaps)
 
 
 def _refresh_layer(file, entry, layer) -> None:
@@ -233,7 +234,7 @@ def _apply_update(file, entry, material, layers_by_id, summary) -> bool:
                     continue
                 if current == new_fingerprint:
                     continue
-            _refresh_material(file, entry, model_material)
+            _refresh_material(file, entry, model_material, summary.setdefault("style_swaps", []))
             refreshed = True
             if model_layer is not None:
                 _refresh_layer(file, entry, model_layer)
@@ -299,7 +300,7 @@ def _purge_material(file, material, keep_layers=False) -> None:
             file.remove(item)
 
 
-def _build_replacement_material(file, entry):
+def _build_replacement_material(file, entry, swaps=None):
     """Create the replacement IfcMaterial (attributes + identity/property psets +
     best-effort style) for a `mode == "replace"` entry."""
     material = ifcopenshell.api.run(
@@ -311,7 +312,7 @@ def _build_replacement_material(file, entry):
     )
     _add_identity_pset(file, material, entry["identity"])
     _add_property_psets(file, material, entry.get("psets"))
-    _apply_style(file, entry, material)
+    _apply_style(file, entry, material, swaps)
     return material
 
 
@@ -369,7 +370,7 @@ def _apply_replace(file, entry, summary) -> None:
         if not pairs:
             failed.append(_replace_failure(material_id, layer_id))
             return
-        material = _build_replacement_material(file, entry)
+        material = _build_replacement_material(file, entry, summary.setdefault("style_swaps", []))
         if layer_id is not None:
             model_material, model_layer = pairs[0]
             if model_layer is not None:
@@ -438,9 +439,9 @@ def _resolved_style(material_entry):
     return f"color {color}", (((color >> 16) & 255) / 255, ((color >> 8) & 255) / 255, (color & 255) / 255)
 
 
-def _valid_style_names(material):
-    """Names of the valid (non-empty) surface styles assigned to a material."""
-    names = []
+def _valid_style_entities(material):
+    """The valid (non-empty) IfcSurfaceStyle entities assigned to a material."""
+    found = []
     for representation in material.HasRepresentation or ():
         for styled in representation.Representations or ():
             for item in styled.Items or ():
@@ -448,14 +449,22 @@ def _valid_style_names(material):
                     continue
                 for style in item.Styles or ():
                     if style.is_a("IfcSurfaceStyle") and style.Styles:
-                        names.append(style.Name)
+                        found.append(style)
                     elif style.is_a("IfcPresentationStyleAssignment"):
-                        names.extend(
-                            nested.Name
-                            for nested in style.Styles or ()
-                            if nested.is_a("IfcSurfaceStyle") and nested.Styles
+                        found.extend(
+                            nested for nested in style.Styles or () if nested.is_a("IfcSurfaceStyle") and nested.Styles
                         )
-    return names
+    return found
+
+
+def _valid_style_names(material):
+    """Names of the valid (non-empty) surface styles assigned to a material."""
+    return [style.Name for style in _valid_style_entities(material)]
+
+
+def _style_in_use(file, style) -> bool:
+    """True when any IfcMaterial still carries `style`."""
+    return any(style in _valid_style_entities(material) for material in file.by_type("IfcMaterial"))
 
 
 def _should_style(material):
@@ -467,7 +476,7 @@ def _should_style(material):
     return all(name and _OUR_STYLE_NAME.match(name) for name in names)
 
 
-def _apply_style(file, material_entry, material):
+def _apply_style(file, material_entry, material, swaps=None):
     """Best-effort schema-valid material styling; needs a representation
     context (bonsai files have one, scratch CI files do not).
 
@@ -476,11 +485,17 @@ def _apply_style(file, material_entry, material):
     add_surface_style runs, so a mid-way failure would persist an entity
     that crashes ifcopenshell's style loader on the next open. Existing
     styles with NULL/empty Styles are ignored on reuse for the same
-    reason."""
+    reason.
+
+    `swaps` optionally collects ``(superseded_style, new_style)`` entity pairs:
+    switching a material to a DIFFERENT style entity leaves already-loaded
+    Blender objects on the old style's material (Bonsai copies it into mesh
+    slots at load time), so the Blender layer repoints them after the push."""
     resolved = _resolved_style(material_entry)
     if resolved is None:
         return
     name, rgb = resolved
+    old_styles = _valid_style_entities(material)
     try:
         context = ifcopenshell.util.representation.get_context(file, "Model", "Body", "MODEL_VIEW")
         if context is None:
@@ -516,6 +531,10 @@ def _apply_style(file, material_entry, material):
                 if current != wanted:
                     colour.Red, colour.Green, colour.Blue = rgb[0], rgb[1], rgb[2]
         ifcopenshell.api.run("style.assign_material_style", file, material=material, style=style, context=context)
+        if swaps is not None and style not in old_styles:
+            for old_style in old_styles:
+                if not _style_in_use(file, old_style):
+                    swaps.append((old_style, style))
     except Exception:  # noqa: BLE001, S110 - cosmetic; never fail the insert
         pass
 
@@ -559,6 +578,7 @@ def apply_add_materials(file, payload, summary=None) -> int:
     summary.setdefault("update_missing", [])
     summary.setdefault("changed_skipped", [])
     summary.setdefault("replace_failed", [])
+    swaps = summary.setdefault("style_swaps", [])
     for entry in payload.get("materials") or []:
         identity = entry["identity"]
         material_id = identity["material_id"]
@@ -586,7 +606,7 @@ def apply_add_materials(file, payload, summary=None) -> int:
                 continue
         if key in existing:
             if _should_style(existing[key]):
-                _apply_style(file, entry, existing[key])
+                _apply_style(file, entry, existing[key], swaps)
             continue
         material = ifcopenshell.api.run(
             "material.add_material",
@@ -610,7 +630,7 @@ def apply_add_materials(file, payload, summary=None) -> int:
                 layer=ifc_layer,
                 attributes={"LayerThickness": thickness, "Name": label, "Description": str(layer["layer_id"])},
             )
-        _apply_style(file, entry, material)
+        _apply_style(file, entry, material, swaps)
         existing[key] = material
         known_by_id.setdefault(material_id, material)
         created += 1
@@ -640,6 +660,7 @@ def apply_add_construction(file, payload) -> dict:
         "update_missing": [],
         "changed_skipped": [],
         "replace_failed": [],
+        "style_swaps": [],
     }
 
     known = _existing_keys(file)
@@ -707,7 +728,7 @@ def apply_add_construction(file, payload) -> dict:
         # A changed "skip" leaves the material untouched entirely, and an
         # in-place update already refreshed its style in _refresh_material.
         if not changed and not refreshed and _should_style(material):
-            _apply_style(file, entry, material)
+            _apply_style(file, entry, material, summary["style_swaps"])
         layers.append((layer, material))
 
     name = str(construction["name"])
