@@ -207,6 +207,32 @@ def _force_plan(store_, model_path, choices) -> tuple[list[dict], dict, list[str
     return entries, unresolved, skipped
 
 
+def _restyle_plan(store_, model_path, scheme, ignore_producer_color):
+    """(entries, skipped): style-only entries for every model material still in the store."""
+    from materialsdb.gui.listener import style_for
+
+    entries, skipped = [], []
+    for material_id in store_.get_model_materials(model_path):
+        material = store_.get(material_id)
+        if material is None:
+            skipped.append(material_id)
+            continue
+        style_name, rgb = style_for(
+            getattr(material.information, "color", None),
+            str(getattr(material.information, "group", "") or ""),
+            scheme=scheme,
+            ignore_producer_color=ignore_producer_color,
+        )
+        entries.append(
+            {
+                "material_id": material_id,
+                "style_name": style_name,
+                "style_color": [round(component, 6) for component in rgb],
+            }
+        )
+    return entries, skipped
+
+
 def _lambda_value(entry) -> float | None:
     thermal = (entry.get("psets") or {}).get("materialsdb.org_thermal") or {}
     return thermal.get("lambda_value_dry")
@@ -526,6 +552,27 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 },
             },
         )
+
+    def _model_restyle(self, store_, payload):
+        """Queue a style-only restyle of every material cached for the active model."""
+        model_path = _active_model_path(self.state) or self.state.last_model_path
+        if not model_path:
+            self._send(409, {"error": "no model connected"})
+            return
+        client_id = next(
+            (cid for cid, listener in self.state.listeners.items() if listener.get("model_path") == model_path),
+            None,
+        )
+        if client_id is None:
+            self._send(409, {"error": "no listener connected for the active model"})
+            return
+        scheme = config.get_scheme() or schemes.DEFAULT_SCHEME
+        entries, skipped = _restyle_plan(store_, model_path, scheme, config.get_ignore_producer_color())
+        if entries:
+            listener = self.state.listeners[client_id]
+            listener["pending"] = {"action": "restyle", "materials": entries}
+            listener["last_status"] = {"status": "pending", "detail": ""}
+        self._send(200, {"queued": len(entries), "skipped": skipped, "scheme": scheme})
 
     def _listener_send(self, store_, payload):
         client_id = str(payload.get("client_id") or "")
@@ -953,6 +1000,8 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._listener_send(store_, payload)
             elif parsed.path == "/api/model/force-update":
                 self._model_force_update(store_, payload)
+            elif parsed.path == "/api/model/restyle":
+                self._model_restyle(store_, payload)
             elif parsed.path == "/api/listener/status":
                 self._listener_status(payload)
             else:

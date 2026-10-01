@@ -1783,3 +1783,57 @@ def test_config_scheme_and_override_roundtrip(api):
     assert body["ignore_producer_color"] is True
     assert body["scheme"] == "Lesosai"
     assert "Lesosai" in body["schemes"]
+
+
+def test_model_restyle_queues_all_store_materials_and_reports_skipped(api):
+    server, state = api
+    path = "/m/restyle.ifc"
+    _ingest_model(
+        server,
+        state,
+        path,
+        {
+            M1: {"fingerprint": None, "scheme": None, "used_in": ["IfcWall"], "layers": []},
+            M2: {"fingerprint": None, "scheme": None, "used_in": [], "layers": []},  # unused still restyled
+            "ghost": {"fingerprint": None, "scheme": None, "used_in": [], "layers": []},
+        },
+    )
+
+    status, body = request(server, "POST", "/api/model/restyle", payload={}, token=state.token)
+
+    assert status == 200
+    assert body["queued"] == 2 and body["skipped"] == ["ghost"]
+    assert body["scheme"] == "Lesosai"
+    pending = state.listeners["c1"]["pending"]
+    assert pending["action"] == "restyle"
+    assert {entry["material_id"] for entry in pending["materials"]} == {M1, M2}
+    assert all(set(entry) == {"material_id", "style_name", "style_color"} for entry in pending["materials"])
+
+
+def test_model_restyle_uses_active_scheme_and_override(api, monkeypatch):
+    server, state = api
+    _ingest_model(
+        server, state, "/m/restyle2.ifc", {M1: {"fingerprint": None, "scheme": None, "used_in": [], "layers": []}}
+    )
+    calls = []
+
+    def spy(color, category, scheme=None, ignore_producer_color=False):
+        calls.append((scheme, ignore_producer_color))
+        return "category Insulation", (1.0, 0.0, 0.0)
+
+    monkeypatch.setattr("materialsdb.gui.listener.style_for", spy)
+    monkeypatch.setattr("materialsdb.config.get_scheme", lambda: "Mine")
+    monkeypatch.setattr("materialsdb.config.get_ignore_producer_color", lambda: True)
+
+    status, _ = request(server, "POST", "/api/model/restyle", payload={}, token=state.token)
+
+    assert status == 200
+    assert calls == [("Mine", True)]
+    entry = state.listeners["c1"]["pending"]["materials"][0]
+    assert entry["style_name"] == "category Insulation" and entry["style_color"] == [1.0, 0.0, 0.0]
+
+
+def test_model_restyle_requires_listener(api):
+    server, state = api
+    status, _ = request(server, "POST", "/api/model/restyle", payload={}, token=state.token)
+    assert status == 409
