@@ -394,3 +394,54 @@ def test_build_without_layers_styles_the_material(mini_source):
     assert (colour.Red, colour.Green, colour.Blue) == (1.0, 0.0, 0.0)
     assert len(file.by_type("IfcStyledItem")) == 1
     assert len(file.by_type("IfcStyledRepresentation")) == 1
+
+
+def test_style_for_ignore_producer_color_uses_category():
+    from materialsdb.ifc.material_builder import CATEGORIES, style_for
+
+    name, rgb = style_for(16711680, "Insulation", ignore_producer_color=True)
+    assert name == "category Insulation"
+    assert rgb == tuple(c / 255 for c in CATEGORIES["Insulation"]["color"])
+
+
+def test_style_for_unknown_scheme_falls_back_to_lesosai():
+    from materialsdb.ifc.material_builder import style_for
+
+    assert style_for(None, "Concrete", scheme="Nope") == style_for(None, "Concrete")
+
+
+def test_builder_defaults_style_preferences_from_config(tmp_path, monkeypatch):
+    import ifcopenshell
+
+    from materialsdb import schemes
+    from materialsdb.ifc.material_builder import MaterialBuilder
+
+    monkeypatch.setattr("materialsdb.config.get_config_dir", lambda: tmp_path)
+    palette = {k: dict(v) for k, v in schemes.CATEGORIES.items()}
+    palette["Concrete"] = {"hatch": "", "color": [1, 2, 3]}
+    schemes.save("Mine", palette)
+    monkeypatch.setattr("materialsdb.config.get_scheme", lambda: "Mine")
+    monkeypatch.setattr("materialsdb.config.get_ignore_producer_color", lambda: True)
+
+    builder = MaterialBuilder(ifcopenshell.file(schema="IFC4"))
+    assert builder.style_scheme == "Mine" and builder.ignore_producer_color is True
+    style = builder.get_surface_style(16711680, "Concrete")
+    colour = style.Styles[0].SurfaceColour
+    assert style.Name == "category Concrete"
+    assert (colour.Red, colour.Green, colour.Blue) == (1 / 255, 2 / 255, 3 / 255)
+
+
+def test_builder_explicit_style_arguments_win(tmp_path, monkeypatch):
+    import ifcopenshell
+
+    from materialsdb import schemes
+    from materialsdb.ifc.material_builder import MaterialBuilder
+
+    monkeypatch.setattr("materialsdb.config.get_config_dir", lambda: tmp_path)
+    schemes.save("Mine", schemes.CATEGORIES)
+    monkeypatch.setattr("materialsdb.config.get_scheme", lambda: "Mine")
+    monkeypatch.setattr("materialsdb.config.get_ignore_producer_color", lambda: True)
+
+    builder = MaterialBuilder(ifcopenshell.file(schema="IFC4"), style_scheme="Lesosai", ignore_producer_color=False)
+    style = builder.get_surface_style(16711680, "Concrete")
+    assert style.Name == "color 16711680"

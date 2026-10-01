@@ -55,7 +55,12 @@ def build_add_materials_payload(store_, items, country=None, lang=None):
         color = int(color) if color else None
         # Resolve the surface style server-side: the add-on runs in Blender's
         # interpreter without access to the materialsdb colour scheme.
-        style_name, style_rgb = style_for(color, category)
+        style_name, style_rgb = style_for(
+            color,
+            category,
+            scheme=config.get_scheme(),
+            ignore_producer_color=config.get_ignore_producer_color(),
+        )
         entries = []
         for layer in utils.get_material_layers(material):
             if wanted is not None and str(layer.id) not in wanted:
@@ -194,7 +199,12 @@ def build_add_construction_payload(store_, body, country=None, lang=None):
         color = getattr(material.information, "color", None)
         color = int(color) if color else None
         category = str(getattr(material.information, "group", "") or "")
-        style_name, style_rgb = style_for(color, category)
+        style_name, style_rgb = style_for(
+            color,
+            category,
+            scheme=config.get_scheme(),
+            ignore_producer_color=config.get_ignore_producer_color(),
+        )
         material_entry = {
             "source_id": layer.material_id,
             "name": str(utils.get_material_name(material, lang)),

@@ -540,3 +540,32 @@ def test_construction_payload_carries_category_scheme_style(store):
     material = payload["construction"]["layers"][0]["material"]
     assert material["style_name"] == "category Concrete"  # no producer colour -> scheme
     assert material["style_color"] == [round(component / 255, 6) for component in CATEGORIES["Concrete"]["color"]]
+
+
+def test_payload_honours_custom_scheme_and_override(store, tmp_path, monkeypatch):
+    """A custom scheme plus the producer-colour override change the resolved style."""
+    from materialsdb import schemes
+
+    monkeypatch.setattr("materialsdb.config.get_config_dir", lambda: tmp_path)
+    palette = {name: dict(style) for name, style in schemes.CATEGORIES.items()}
+    palette["Insulation"] = {"hatch": "", "color": [1, 2, 3]}
+    schemes.save("Mine", palette)
+    monkeypatch.setattr("materialsdb.config.get_scheme", lambda: "Mine")
+    monkeypatch.setattr("materialsdb.config.get_ignore_producer_color", lambda: True)
+
+    payload, problems = build_add_materials_payload(store, [{"id": "00000000-0000-0000-0000-000000000001"}])
+
+    assert problems == []
+    first = payload["materials"][0]
+    assert first["style_name"] == "category Insulation"  # producer colour 0xFF0000 ignored
+    assert first["style_color"] == [round(c / 255, 6) for c in (1, 2, 3)]
+
+
+def test_construction_payload_honours_override(store, monkeypatch):
+    monkeypatch.setattr("materialsdb.config.get_ignore_producer_color", lambda: True)
+    payload, problems = build_add_construction_payload(
+        store,
+        body={"name": "w", "layers": [{"material_id": "00000000-0000-0000-0000-000000000001", "thickness_m": 0.2}]},
+    )
+    assert problems == []
+    assert payload["construction"]["layers"][0]["material"]["style_name"] == "category Insulation"

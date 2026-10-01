@@ -20,15 +20,17 @@ def _rgb_int_components(color: int) -> tuple[float, float, float]:
     return (((color >> 16) & 255) / 255, ((color >> 8) & 255) / 255, (color & 255) / 255)
 
 
-def style_for(color, category, scheme=None):
+def style_for(color, category, scheme=None, ignore_producer_color=False):
     """Resolve a material's (IfcSurfaceStyle.Name, (r, g, b) in 0..1).
 
-    The producer colour wins when present; otherwise the category colour from
-    the scheme (default 'Lesosai' = CATEGORIES). Unknown categories fall back
-    to 'Others'."""
-    if color:
+    The producer colour wins when present and not disabled; otherwise the
+    category colour from the named scheme. Schemes are re-read on every call
+    (custom palettes live on disk), an unknown scheme falls back to 'Lesosai'
+    (the built-in CATEGORIES palette) and unknown categories to 'Others'."""
+    if color and not ignore_producer_color:
         return f"color {int(color)}", _rgb_int_components(int(color))
-    palette = SCHEMES.get(scheme or DEFAULT_SCHEME, CATEGORIES)
+    palettes = schemes.available()
+    palette = palettes.get(scheme or schemes.DEFAULT_SCHEME) or palettes[schemes.DEFAULT_SCHEME]
     category = category if category in palette else "Others"
     return f"category {category}", tuple(component / 255 for component in palette[category]["color"])
 
@@ -65,10 +67,16 @@ def _ifc_text(file, value):
 
 
 class MaterialBuilder:
-    def __init__(self, file, country=None, lang=None):
+    def __init__(self, file, country=None, lang=None, style_scheme=None, ignore_producer_color=None):
         self.file = file
         self.country = country or config.get_country()
         self.lang = lang or config.get_lang()
+        # Style preferences. Not to be confused with build(scheme=), which
+        # selects the material fingerprint scheme, not a colour palette.
+        self.style_scheme = style_scheme if style_scheme is not None else config.get_scheme()
+        self.ignore_producer_color = (
+            config.get_ignore_producer_color() if ignore_producer_color is None else bool(ignore_producer_color)
+        )
         self._context = None
         self._styles = {}
 
@@ -217,10 +225,12 @@ class MaterialBuilder:
                 Material=ifc_material,
             )
 
-    def _add_style_chain(self, color, category, scheme=None):
+    def _add_style_chain(self, color, category, scheme=None, ignore_producer_color=None):
         """Create the floating styled chain MaterialBuilder uses for a
         material's colour (shared style + one styled item per build)."""
-        surface_style = self.get_surface_style(color, category, scheme=scheme)
+        surface_style = self.get_surface_style(
+            color, category, scheme=scheme, ignore_producer_color=ignore_producer_color
+        )
         styled_item = self.file.createIfcStyledItem(Styles=[surface_style])
         self.file.createIfcStyledRepresentation(
             ContextOfItems=self._get_context(),
@@ -228,8 +238,12 @@ class MaterialBuilder:
             Items=[styled_item],
         )
 
-    def get_surface_style(self, color, category, scheme=None):
-        name, rgb = style_for(color, category, scheme=scheme)
+    def get_surface_style(self, color, category, scheme=None, ignore_producer_color=None):
+        if scheme is None:
+            scheme = self.style_scheme
+        if ignore_producer_color is None:
+            ignore_producer_color = self.ignore_producer_color
+        name, rgb = style_for(color, category, scheme=scheme, ignore_producer_color=ignore_producer_color)
         if name in self._styles and self._styles[name] in self.file:
             return self._styles[name]
         shading = self.file.createIfcSurfaceStyleShading(
