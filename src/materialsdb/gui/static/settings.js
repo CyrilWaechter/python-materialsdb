@@ -86,16 +86,12 @@ function updateEditorButtons() {
   const custom = !!activeScheme && !schemeIsBuiltin(activeScheme);
   if (rename) rename.disabled = !custom;
   if (remove) remove.disabled = !custom;
+  exportSelected();
 }
 
 function schemeIsBuiltin(name) {
   const entry = schemesList.find((scheme) => scheme.name === name);
   return !entry || !!entry.builtin;
-}
-
-function clearExportLink() {
-  const target = $("export-scheme");
-  if (target) target.innerHTML = "export";
 }
 
 function renderEditor() {
@@ -204,7 +200,6 @@ async function refreshSchemeState() {
   populateSchemeSelect();
   renderSchemeList();
   updateEditorButtons();
-  clearExportLink();
 }
 
 async function selectScheme(name) {
@@ -213,7 +208,7 @@ async function selectScheme(name) {
   const select = $("scheme");
   if (select) select.value = name;
   renderSchemeList();
-  clearExportLink();
+  exportSelected();
   try {
     await saveConfig({ scheme: name });
   } catch (err) {
@@ -338,16 +333,17 @@ async function deleteSelected() {
 }
 
 function exportSelected() {
-  const name = activeScheme;
-  if (!name) {
-    setText("editor-status", "select a scheme to export");
-    return;
-  }
   const target = $("export-scheme");
   if (!target) return;
-  // the GET export is not token-gated, so a plain download anchor works
+  const name = activeScheme;
+  if (!name) {
+    target.innerHTML = "";
+    return;
+  }
+  // the GET export is not token-gated, so a plain download anchor works; the
+  // #export-scheme container stays non-interactive (span) so the anchor is valid
   const href = `/api/schemes/${encodeURIComponent(name)}/export`;
-  target.innerHTML = `<a href="${esc(href)}" download="${esc(name)}.json">download ${esc(name)}.json</a>`;
+  target.innerHTML = `<a href="${esc(href)}" download="${esc(name)}.json">export ${esc(name)}.json</a>`;
 }
 
 function resetImportFile() {
@@ -499,16 +495,6 @@ function bindControls() {
 
   const deleteButton = $("delete-scheme");
   if (deleteButton) deleteButton.addEventListener("click", () => deleteSelected());
-
-  const exportButton = $("export-scheme");
-  if (exportButton) {
-    exportButton.addEventListener("click", (event) => {
-      const target = event && event.target;
-      // a click on the rendered download anchor must act, not re-render it
-      if (target && typeof target.closest === "function" && target.closest("a")) return;
-      exportSelected();
-    });
-  }
 
   const importButton = $("import-scheme");
   const importFile = $("import-file");

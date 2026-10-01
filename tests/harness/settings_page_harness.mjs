@@ -9,9 +9,10 @@
 //   (d) without a model it is disabled and the hint is visible;
 //   (e) cloning renders all 17 editor rows, editing Concrete re-renders the
 //       preview and save-as posts the edited palette under the encoded name;
-//   (f) rename/delete post to the encoded /rename and /delete endpoints, the
-//       export button renders the GET anchor, and importing an envelope shows
-//       the server's 409 conflict before a retry succeeds and selects it.
+//   (f) rename/delete post to the encoded /rename and /delete endpoints,
+//       selecting a scheme renders the export GET anchor, and importing an
+//       envelope shows the server's 409 conflict before a retry succeeds and
+//       selects the imported scheme.
 // Usage: node settings_page_harness.mjs <path/to/settings.js>
 
 import fs from "node:fs";
@@ -313,11 +314,10 @@ mark(
   `post=${JSON.stringify(savedPost)} categories=${categoryCount} colour=${JSON.stringify(savedConcrete)} refreshed=${listRefreshed}`,
 );
 
-// (f) export: the selected custom scheme renders the download anchor -------
+// (f) export: selecting a custom scheme renders the download anchor into the
+// non-interactive #export-scheme container ---------------------------------
 await S.__selectScheme("Mine");
 const exportButton = S.__get("export-scheme");
-exportButton.dispatch("click");
-await sleep(20);
 const exportHtml = exportButton.innerHTML;
 mark(
   "export",
