@@ -314,6 +314,76 @@ mark(
   `post=${JSON.stringify(savedPost)} categories=${categoryCount} colour=${JSON.stringify(savedConcrete)} refreshed=${listRefreshed}`,
 );
 
+// save-as must not silently overwrite an existing scheme: the conflict is
+// inline and nothing is posted ----------------------------------------------
+const editorStatusBox = S.__get("editor-status");
+const conflictPostsBefore = schemePosts.length;
+nameField.value = "Mine";
+saveAsButton.dispatch("click");
+await sleep(50);
+mark(
+  "save-as conflict",
+  schemePosts.length === conflictPostsBefore && editorStatusBox.textContent.includes("already exists"),
+  `posts=${schemePosts.length - conflictPostsBefore} status=${JSON.stringify(editorStatusBox.textContent)}`,
+);
+
+// ...while a free name still posts the edited draft under the encoded name ---
+nameField.value = "Studio II";
+saveAsButton.dispatch("click");
+await sleep(50);
+const freePost = schemePosts[schemePosts.length - 1];
+mark(
+  "save-as free name",
+  !!freePost &&
+    freePost.path === "/api/schemes/Studio%20II" &&
+    !!freePost.body &&
+    Object.keys(freePost.body.categories).length === 17,
+  `post=${JSON.stringify(freePost)}`,
+);
+
+// selecting away from a dirty draft asks first: the edited scheme itself is a
+// no-op, cancel keeps the draft, accept drops it and switches ---------------
+const previewChips = S.__get("preview-chips");
+const editedVisible = () => previewChips.innerHTML.includes("#445566");
+let confirmCalls = 0;
+globalThis.window.confirm = () => {
+  confirmCalls += 1;
+  return false;
+};
+rowsBox.dispatch("input", { target: { dataset: { category: "Concrete" }, value: "#445566" } });
+await sleep(10);
+await S.__selectScheme("Studio II");
+mark(
+  "select same keeps draft",
+  confirmCalls === 0 && editedVisible(),
+  `confirmCalls=${confirmCalls} edited=${editedVisible()}`,
+);
+await S.__selectScheme("Mine");
+mark(
+  "select cancel keeps draft",
+  confirmCalls === 1 &&
+    editedVisible() &&
+    editorStatusBox.textContent.includes("unsaved") &&
+    schemeSelect.value === "Lesosai",
+  `confirmCalls=${confirmCalls} edited=${editedVisible()} ` +
+    `status=${JSON.stringify(editorStatusBox.textContent)} value=${JSON.stringify(schemeSelect.value)}`,
+);
+globalThis.window.confirm = () => {
+  confirmCalls += 1;
+  return true;
+};
+await S.__selectScheme("Mine");
+mark(
+  "select accept switches",
+  confirmCalls === 2 &&
+    schemeSelect.value === "Mine" &&
+    !editedVisible() &&
+    previewChips.innerHTML.includes("#21578d"),
+  `confirmCalls=${confirmCalls} value=${JSON.stringify(schemeSelect.value)} ` +
+    `edited=${editedVisible()} switched=${previewChips.innerHTML.includes("#21578d")}`,
+);
+delete globalThis.window.confirm;
+
 // (f) export: selecting a custom scheme renders the download anchor into the
 // non-interactive #export-scheme container ---------------------------------
 await S.__selectScheme("Mine");

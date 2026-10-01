@@ -1785,6 +1785,26 @@ def test_config_scheme_and_override_roundtrip(api):
     assert "Lesosai" in body["schemes"]
 
 
+def test_config_reports_effective_scheme_only(api, monkeypatch):
+    """The stored name is reported only while it resolves; a stored-but-absent
+    scheme falls back to Lesosai exactly like the restyle resolution does."""
+    server, state = api
+
+    monkeypatch.setattr("materialsdb.config.get_scheme", lambda: "Ghost Palette")
+    status, body = request(server, "GET", "/api/config")
+    assert status == 200
+    assert body["scheme"] == "Lesosai"
+    assert "Ghost Palette" not in body["schemes"]
+
+    payload = {"categories": _custom_palette()}
+    assert request(server, "POST", "/api/schemes/Real%20Palette", payload=payload, token=state.token)[0] == 200
+    monkeypatch.setattr("materialsdb.config.get_scheme", lambda: "Real Palette")
+    status, body = request(server, "GET", "/api/config")
+    assert status == 200
+    assert body["scheme"] == "Real Palette"
+    assert "Real Palette" in body["schemes"]
+
+
 def test_model_restyle_queues_all_store_materials_and_reports_skipped(api):
     server, state = api
     path = "/m/restyle.ifc"

@@ -204,6 +204,14 @@ async function refreshSchemeState() {
 
 async function selectScheme(name) {
   if (!name) return;
+  if (draft && name === draft.name) return; // already editing this palette: keep the in-memory draft
+  if (draft && draft.dirty && !mayDiscardDraft(name)) {
+    // cancelled: restore the control to the effective scheme and keep editing
+    const select = $("scheme");
+    if (select) select.value = activeScheme || draft.name;
+    setText("editor-status", `unsaved changes to ${draft.name} kept — save or discard before switching`);
+    return;
+  }
   activeScheme = name;
   const select = $("scheme");
   if (select) select.value = name;
@@ -215,6 +223,13 @@ async function selectScheme(name) {
     setText("editor-status", err.message);
   }
   await loadDraft(name);
+}
+
+function mayDiscardDraft(name) {
+  if (!draft || !draft.dirty || name === draft.name) return true;
+  const confirmFn = typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm : null;
+  if (!confirmFn) return true; // no confirm dialog available: switching stays allowed
+  return confirmFn(`Discard unsaved changes to ${draft.name}?`);
 }
 
 async function cloneSelected() {
@@ -250,6 +265,11 @@ async function saveDraft(asNewName) {
   const name = requested || String(draft.name || "").trim();
   if (!name) {
     setText("editor-status", "enter a scheme name first");
+    return;
+  }
+  if (requested && requested !== draft.name && schemesList.some((scheme) => scheme.name === requested)) {
+    // save-as must create a new palette: never silently overwrite a custom one
+    setText("editor-status", `a scheme named ${requested} already exists — choose another name`);
     return;
   }
   try {

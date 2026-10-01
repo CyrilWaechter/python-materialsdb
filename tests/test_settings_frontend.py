@@ -7,9 +7,13 @@ config patch, and apply-colours calls ``/api/model/restyle`` and reports the
 queued count plus the listener's applied detail. Without a connected model the
 button is disabled and the hint is shown. The palette editor core is covered
 too: cloning renders all 17 rows, an input event re-renders the live preview
-and save-as posts the edited palette under the encoded name. Finally rename and
-delete post to their encoded endpoints, export renders the unauthenticated GET
-anchor, and importing surfaces the 409 conflict before the retry succeeds.
+and save-as posts the edited palette under the encoded name. Save-as refuses an
+existing name with an inline conflict instead of overwriting it, while a free
+name still posts. Selecting away from a dirty draft asks first: the edited
+scheme itself is a no-op, cancel keeps the draft and accept switches. Finally
+rename and delete post to their encoded endpoints, export renders the
+unauthenticated GET anchor, and importing surfaces the 409 conflict before the
+retry succeeds.
 
 Skipped automatically when node is unavailable."""
 
@@ -53,6 +57,11 @@ def test_settings_page_scheme_and_apply_colours():
     assert "editor rows: OK" in result.stdout
     assert "preview: OK" in result.stdout
     assert "save payload: OK" in result.stdout
+    assert "save-as conflict: OK" in result.stdout
+    assert "save-as free name: OK" in result.stdout
+    assert "select same keeps draft: OK" in result.stdout
+    assert "select cancel keeps draft: OK" in result.stdout
+    assert "select accept switches: OK" in result.stdout
     assert "rename: OK" in result.stdout
     assert "delete: OK" in result.stdout
     assert "export: OK" in result.stdout

@@ -860,12 +860,14 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/api/config":
             from materialsdb import config as cfg
 
+            stored_scheme = cfg.get_scheme()
             self._send(
                 200,
                 {
                     "lang": cfg.get_lang(),
                     "country": cfg.get_country(),
-                    "scheme": cfg.get_scheme() or schemes.DEFAULT_SCHEME,
+                    # effective scheme: a stored-but-absent name resolves to the default
+                    "scheme": stored_scheme if stored_scheme in schemes.available() else schemes.DEFAULT_SCHEME,
                     "schemes": list(schemes.available()),
                     "ignore_producer_color": cfg.get_ignore_producer_color(),
                 },
