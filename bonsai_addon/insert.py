@@ -41,14 +41,50 @@ def _org_layer_id_of(material) -> str | None:
     return ifcopenshell.util.element.get_psets(material).get("materialsdb.org_layer", {}).get("layer_id")
 
 
-def existing_materials_by_id(file):
-    """material_id -> first IfcMaterial carrying a matching materialsdb pset."""
-    found = {}
+def _all_materials_by_id(file):
+    """material_id -> every IfcMaterial carrying a matching materialsdb pset.
+
+    A multi-layer material has one IfcMaterial per layer, so callers that must
+    touch each of them (restyle) need the full list."""
+    found: dict[str, list] = {}
     for material in file.by_type("IfcMaterial"):
         material_id = _material_id_of(material)
-        if material_id is not None and material_id not in found:
-            found[material_id] = material
+        if material_id is not None:
+            found.setdefault(material_id, []).append(material)
     return found
+
+
+def existing_materials_by_id(file):
+    """material_id -> first IfcMaterial carrying a matching materialsdb pset."""
+    return {material_id: materials[0] for material_id, materials in _all_materials_by_id(file).items()}
+
+
+def apply_restyle(file, payload, summary=None) -> int:
+    """Style-only refresh: never touches psets, identity, layers or thicknesses.
+
+    Every IfcMaterial carrying the entry's material_id is styled (a multi-layer
+    material has several). Materials with a third-party/manual style are kept
+    and their id recorded in `summary["kept_styles"]`; ids with no material in
+    the model land in `summary["missing"]`. Returns the number restyled."""
+    if summary is None:
+        summary = {}
+    summary.setdefault("kept_styles", [])
+    summary.setdefault("missing", [])
+    by_id = _all_materials_by_id(file)
+    restyled = 0
+    for entry in payload.get("materials") or []:
+        material_id = str(entry.get("material_id") or "")
+        targets = by_id.get(material_id) or []
+        if not targets:
+            summary["missing"].append(material_id)
+            continue
+        for material in targets:
+            if not _should_style(material):
+                summary["kept_styles"].append(material_id)
+                continue
+            _apply_style(file, entry, material)
+            restyled += 1
+    return restyled
 
 
 def _existing_keys(file):
@@ -465,6 +501,20 @@ def _apply_style(file, material_entry, material):
                 SurfaceColour=file.create_entity("IfcColourRgb", Name=None, Red=rgb[0], Green=rgb[1], Blue=rgb[2]),
             )
             style = file.create_entity("IfcSurfaceStyle", Name=name, Side="BOTH", Styles=[shading])
+        else:
+            # reused style: recolour only when the requested RGB actually
+            # differs (0-255 comparison, no false writes from float rounding);
+            # shadings without a SurfaceColour are unknown structures -> untouched
+            wanted = tuple(round(component * 255) for component in rgb)
+            for item in style.Styles or ():
+                if not item.is_a("IfcSurfaceStyleShading"):
+                    continue
+                colour = item.SurfaceColour
+                if colour is None:
+                    continue
+                current = (round(colour.Red * 255), round(colour.Green * 255), round(colour.Blue * 255))
+                if current != wanted:
+                    colour.Red, colour.Green, colour.Blue = rgb[0], rgb[1], rgb[2]
         ifcopenshell.api.run("style.assign_material_style", file, material=material, style=style, context=context)
     except Exception:  # noqa: BLE001, S110 - cosmetic; never fail the insert
         pass

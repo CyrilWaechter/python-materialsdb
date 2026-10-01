@@ -68,6 +68,17 @@ class MATERIALSDB_OT_apply_push(bpy.types.Operator, tool.Ifc.Operator):
             )
             _CLIENT.report("applied", _safety_net(report, result))
             _send_model_map()
+        elif action == "restyle":
+            summary = {}
+            count = insert.apply_restyle(tool.Ifc.get(), payload, summary=summary)
+            _sync_style_materials(tool.Ifc.get())
+            detail = f"{count} material(s) restyled"
+            kept, missing = sorted(set(summary["kept_styles"])), sorted(set(summary["missing"]))
+            if kept:
+                detail += f", {len(kept)} kept (foreign style)"
+            if missing:
+                detail += f", {len(missing)} not in model"
+            _CLIENT.report("applied", detail)
         else:
             _CLIENT.report("error", f"unknown action: {action}")
 
@@ -110,6 +121,8 @@ def _undo_label(payload):
         return f"materialsdb: add construction '{payload['construction'].get('name', '')}'"
     if action == "add_materials":
         return f"materialsdb: add {len(payload.get('materials') or [])} material(s)"
+    if action == "restyle":
+        return f"materialsdb: restyle {len(payload.get('materials') or [])} material(s)"
     return "materialsdb: apply push"
 
 

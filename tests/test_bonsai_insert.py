@@ -20,6 +20,7 @@ import insert  # ty: ignore[unresolved-import] - add-on module on a side path
 from insert import (  # ty: ignore[unresolved-import] - add-on module on a side path
     apply_add_construction,
     apply_add_materials,
+    apply_restyle,
     existing_materials_by_id,
 )
 from read_construction import (  # ty: ignore[unresolved-import] - add-on module on a side path
@@ -1416,3 +1417,110 @@ def test_apply_update_force_refreshes_legacy_identity_only(store):
     assert psets["materialsdb"]["fingerprint"]
     assert psets["materialsdb.org_layer"]["layer_id"] == A1
     assert summary["update_missing"] == []
+
+
+def _style_colour(file, name):
+    style = next(s for s in file.by_type("IfcSurfaceStyle") if s.Name == name)
+    colour = next(s for s in style.Styles if s.is_a("IfcSurfaceStyleShading")).SurfaceColour
+    return (round(colour.Red * 255), round(colour.Green * 255), round(colour.Blue * 255))
+
+
+def test_apply_style_updates_reused_style_colour(store):
+    file = _file_with_body_context()
+    payload = _payload(store)
+    apply_add_materials(file, payload)  # creates the style
+    name = payload["materials"][0]["style_name"]
+
+    changed = copy.deepcopy(payload)
+    for entry in changed["materials"]:
+        entry["style_color"] = [0.0, 1.0, 0.0]
+    apply_add_materials(file, changed)
+
+    assert _style_colour(file, name) == (0, 255, 0)
+
+
+def test_apply_style_same_colour_leaves_style_values_untouched(store):
+    file = _file_with_body_context()
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+    name = payload["materials"][0]["style_name"]
+    before = _style_colour(file, name)
+
+    apply_add_materials(file, copy.deepcopy(payload))
+
+    assert _style_colour(file, name) == before  # idempotent, no false write
+
+
+def test_apply_restyle_refreshes_ours_keeps_foreign_and_reports_missing(store):
+    file = _file_with_body_context()
+    payload = _payload(store)
+    apply_add_materials(file, payload)
+    material_id = payload["materials"][0]["identity"]["material_id"]
+
+    # give the first entity a third-party style, as test_apply_preserves_third_party_style_on_reused_material does
+    foreign_material = file.by_type("IfcMaterial")[0]
+    custom = file.create_entity("IfcSurfaceStyle", Name="MyCustom", Side="BOTH")
+    ifcopenshell.api.run(
+        "style.add_surface_style",
+        file,
+        style=custom,
+        ifc_class="IfcSurfaceStyleShading",
+        attributes={"SurfaceColour": {"Name": None, "Red": 0.1, "Green": 0.2, "Blue": 0.3}},
+    )
+    styled_item = next(
+        item
+        for representation in foreign_material.HasRepresentation
+        for styled in representation.Representations
+        for item in styled.Items
+        if item.is_a("IfcStyledItem")
+    )
+    styled_item.Styles = (custom,)
+
+    summary = {}
+    count = apply_restyle(
+        file,
+        {
+            "action": "restyle",
+            "materials": [
+                {"material_id": material_id, "style_name": "category Insulation", "style_color": [0.2, 0.4, 0.6]},
+                {"material_id": "does-not-exist", "style_name": "category Others", "style_color": [1.0, 1.0, 1.0]},
+            ],
+        },
+        summary=summary,
+    )
+
+    assert styled_item.Styles[0].Name == "MyCustom"  # foreign style untouched
+    assert summary["kept_styles"] == [material_id]
+    assert summary["missing"] == ["does-not-exist"]
+    assert count == len(payload["materials"]) - 1  # the other same-id entity was restyled
+
+
+def test_apply_restyle_styles_all_entities_sharing_material_id(store):
+    file = _file_with_body_context()
+    payload = _payload(store)  # 2-layer material -> two IfcMaterial with one id
+    apply_add_materials(file, payload)
+    material_id = payload["materials"][0]["identity"]["material_id"]
+
+    apply_restyle(
+        file,
+        {
+            "action": "restyle",
+            "materials": [
+                {"material_id": material_id, "style_name": "category Insulation", "style_color": [0.2, 0.4, 0.6]},
+            ],
+        },
+    )
+
+    styled = [
+        material
+        for material in file.by_type("IfcMaterial")
+        if ifcopenshell.util.element.get_psets(material).get("materialsdb", {}).get("material_id") == material_id
+    ]
+    assert styled
+    for material in styled:
+        assert any(
+            item.is_a("IfcStyledItem")
+            for representation in material.HasRepresentation
+            for styled_rep in representation.Representations
+            for item in styled_rep.Items
+        )

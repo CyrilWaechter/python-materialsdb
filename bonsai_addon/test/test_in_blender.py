@@ -574,3 +574,52 @@ def test_material_update_preserves_guid_and_resends_model_map(tmp_path):
         assert _stored_model_fingerprint(cache_dir, MATERIAL_ID) == fingerprint
     finally:
         _stop_server(server, old_cache_env)
+
+
+def _base_colour(blender_material):
+    return tuple(blender_material.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value)
+
+
+def test_restyle_refreshes_reused_style_and_live_material():
+    """A restyle push reuses the existing IfcSurfaceStyle (same name) and
+    recolours it; the linked Blender material's Principled BSDF Base Color must
+    follow so the viewport shows the new colour immediately. If this fails on
+    the Base Color assertion, _sync_style_materials must refresh already-linked
+    Blender materials (it currently only calls tool.Style.switch_shading)."""
+    import bpy
+
+    file = tool.Ifc.get()
+    assert file is not None
+    assert insert.apply_add_materials(file, PAYLOAD) == 2
+    bonsai_addon._sync_style_materials(file)
+
+    style = next(s for s in file.by_type("IfcSurfaceStyle") if s.Name == "color 16711680")
+    blender_material = tool.Ifc.get_object(style)
+    assert isinstance(blender_material, bpy.types.Material)
+    base_before = _base_colour(blender_material)
+
+    class _StubClient:
+        def __init__(self):
+            self.calls = []
+
+        def report(self, status, detail):
+            self.calls.append((status, detail))
+
+    previous = bonsai_addon._CLIENT
+    client = _StubClient()
+    bonsai_addon._CLIENT = client
+    bonsai_addon._PENDING = {
+        "action": "restyle",
+        "materials": [{"material_id": MATERIAL_ID, "style_name": "color 16711680", "style_color": [0.0, 1.0, 0.0]}],
+    }
+    try:
+        assert bpy.ops.materialsdb.apply_push() == {"FINISHED"}
+    finally:
+        bonsai_addon._CLIENT = previous
+        bonsai_addon._PENDING = None
+
+    assert client.calls == [("applied", "2 material(s) restyled")]
+    colour = next(s for s in style.Styles if s.is_a("IfcSurfaceStyleShading")).SurfaceColour
+    assert (round(colour.Red * 255), round(colour.Green * 255), round(colour.Blue * 255)) == (0, 255, 0)
+    assert tool.Ifc.get_object(style) is blender_material  # same style, same link
+    assert _base_colour(blender_material) != base_before  # viewport material refreshed
