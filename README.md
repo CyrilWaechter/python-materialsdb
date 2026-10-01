@@ -80,6 +80,17 @@ a standalone `.ifc`, or open one of your own `.ifc` files and append the
 selected materials into it. The same HTTP API powers future BIM software
 plugins (all mutating calls require a per-launch token).
 
+# Colour schemes & settings :
+The Settings page (top navigation) holds language and country, the active
+colour scheme and an *always use category colours* switch. Materials with a
+producer colour keep it unless the switch is on; the others take their
+category's colour from the active scheme (built-in Lesosai, or your own
+palettes). The palette editor edits all 17 category colours with colour
+pickers and a live preview, saves palettes by name, renames on save, and
+exports/imports them as JSON. *Apply colours to model* repaints every
+materialsdb material in the open Bonsai model — choosing the target model and
+showing the listener's result — without touching the material data.
+
 # Construction maker :
 Compose thermal constructions from materialsdb materials and compute their
 U-value (ISO 6946 / SIA 180 surface resistance presets):
@@ -125,7 +136,11 @@ constructions become typed elements (`IfcWallType`/`IfcSlabType`/
 visible in the outliner and revertible with Ctrl+Z. Each pushed type
 also carries its computed U-value as `ThermalTransmittance` in
 `Pset_WallCommon`/`Pset_SlabCommon`/`Pset_RoofCommon` (per the element
-type). Round-trip: select
+type). The picker flags materials whose producer data changed since you
+pushed them, with a changed-field report and opt-in *Update*/*Replace*
+actions (in-place updates keep the entity and never rewrite layer
+thicknesses); *force update used materials* refreshes every materialsdb
+material used by walls, slabs and roofs in one go. Round-trip: select
 the wall (or its type) in Bonsai and hit *Send type to composer* in the
 materialsdb panel — the construction appears under *incoming from model*
 on the constructions page for editing. Any layer's material can be
