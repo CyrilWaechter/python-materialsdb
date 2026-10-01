@@ -150,12 +150,25 @@ function headerClickIgnores(target) {
   return Boolean(target.closest(".chevron") || target.closest(".facet"));
 }
 
+function facetActive(key) {
+  const chosen = facetSelections[key];
+  return Boolean(chosen && chosen.size);
+}
+
+function updateFacetIndicators() {
+  document.querySelectorAll("th[data-sort]").forEach((th) => {
+    if (!th.classList) return;
+    th.classList.toggle("active-facet", facetActive(th.dataset.sort));
+  });
+}
+
 function renderHeader() {
   const headerRow = $("header-row");
   headerRow.innerHTML = `<th></th>` + COLUMNS.map((col) => {
     const arrow = sortKey === col.key ? (sortAsc ? " \u2191" : " \u2193") : "";
     const chevron = col.facet ? ` <span class="chevron" data-facet="${col.key}">\u25be</span>` : "";
-    return `<th data-sort="${col.key}" style="cursor:pointer">${esc(col.label)}${arrow}${chevron}</th>`;
+    const active = col.facet && facetActive(col.key) ? ' class="active-facet"' : "";
+    return `<th data-sort="${col.key}"${active} style="cursor:pointer">${esc(col.label)}${arrow}${chevron}</th>`;
   }).join("");
   headerRow.querySelectorAll("th[data-sort]").forEach((th) => {
     th.addEventListener("click", (event) => {
@@ -212,6 +225,7 @@ function modelReportActionHtml(m) {
 
 async function applyModel() {
   const generation = ++renderGeneration;
+  updateFacetIndicators();
   const needle = $("text").value.trim().toLowerCase();
   const rowsEl = $("rows");
   const matching = [];
@@ -326,8 +340,11 @@ function toggleFacetDropdown(facetKey, anchor) {
     const label = facetKey === "usage" ? ((USAGE_LABELS[lang] || USAGE_LABELS.en)[value] || value) : value;
     return `<label><input type="checkbox" data-value="${esc(value)}"${checked ? " checked" : ""}> ${esc(label)} (${count})</label>`;
   }).join("");
-  box.innerHTML = `<div class="label">${esc(facetKey)}</div>${values}` +
-    `<div style="margin-top:.3rem"><button class="mock-button" data-clear>clear</button></div>`;
+  const hasSelection = facetActive(facetKey);
+  box.innerHTML =
+    `<div class="facet-head"><span class="label">${esc(facetKey)}</span>` +
+    `<button type="button" class="facet-clear" data-clear${hasSelection ? "" : " disabled"}>clear</button></div>` +
+    values;
   anchor.parentElement.appendChild(box);
   box.addEventListener("click", (event) => event.stopPropagation());
   box.addEventListener("change", (event) => {
@@ -335,9 +352,16 @@ function toggleFacetDropdown(facetKey, anchor) {
     if (input.dataset.value === undefined) return;
     input.checked ? facetSelections[facetKey].add(input.dataset.value)
                   : facetSelections[facetKey].delete(input.dataset.value);
+    const clear = box.querySelector("[data-clear]");
+    if (clear) clear.disabled = !facetActive(facetKey);
     applyModel();
   });
-  box.querySelector("[data-clear]").onclick = () => { facetSelections[facetKey].clear(); box.remove(); applyModel(); };
+  box.querySelector("[data-clear]").onclick = () => {
+    facetSelections[facetKey].clear();
+    box.remove();
+    renderHeader();
+    applyModel();
+  };
 }
 
 document.addEventListener("click", (event) => {

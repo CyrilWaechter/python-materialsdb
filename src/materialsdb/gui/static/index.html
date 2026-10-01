@@ -19,6 +19,11 @@
  button { margin: .5rem .25rem 0 0; }
  #status { color: #06c; min-height: 1.2em; }
  .facet { position:absolute; background:#fff; border:1px solid #999; padding:.35rem; z-index:5; max-height:14rem; overflow:auto; }
+ .facet-head { position:sticky; top:-.35rem; margin:-.35rem -.35rem .2rem; padding:.35rem; background:#fff; border-bottom:1px solid #eee; display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
+ .facet-clear { border:none; background:none; padding:0; color:#06c; font:inherit; cursor:pointer; text-decoration:underline; }
+ .facet-clear:disabled { color:#aaa; cursor:default; text-decoration:none; }
+ th.active-facet { color:#06c; }
+ th.active-facet .chevron { background:#e8f0fe; border-radius:2px; }
  .chevron { display:inline-block; padding:.05rem .45rem; margin-left:.1rem; border-left:1px solid #ddd; cursor:pointer; }
  thead th { position: relative; }
  tr.layerrow td { padding-left: 2rem; color: #555; background: #fafcff; }

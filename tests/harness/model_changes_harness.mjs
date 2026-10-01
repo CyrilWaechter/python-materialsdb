@@ -195,6 +195,8 @@ const expose =
   "\n;Object.assign(globalThis,{" +
   "__get:(id)=>document.getElementById(id)," +
   "__headerClickIgnores:(target)=>headerClickIgnores(target)," +
+  "__facetActive:(key)=>facetActive(key)," +
+  "__facetSelections:()=>facetSelections," +
   "__renderModelChanges:(d)=>renderModelChanges(d)," +
   "__openChangeReport:(id)=>openChangeReport(id)," +
   "__chooseLayerMapping:(id)=>chooseLayerMapping(id)," +
@@ -255,6 +257,18 @@ check(
   "plain header click is not ignored",
   S.__headerClickIgnores(plainHeaderTarget) === false,
   `result=${S.__headerClickIgnores(plainHeaderTarget)}`,
+);
+
+// facet activity drives the active-column indicator -----------------------
+const activeBefore = S.__facetActive("category");
+S.__facetSelections().category.add("Insulation");
+const activeDuring = S.__facetActive("category");
+S.__facetSelections().category.clear();
+const activeAfter = S.__facetActive("category");
+check(
+  "facet indicator follows selections",
+  activeBefore === false && activeDuring === true && activeAfter === false,
+  `before=${activeBefore} during=${activeDuring} after=${activeAfter}`,
 );
 
 // (a) banner count ------------------------------------------------
