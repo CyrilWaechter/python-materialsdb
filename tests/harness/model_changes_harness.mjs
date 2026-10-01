@@ -194,6 +194,7 @@ const appSrc = fs.readFileSync(process.argv[3], "utf-8");
 const expose =
   "\n;Object.assign(globalThis,{" +
   "__get:(id)=>document.getElementById(id)," +
+  "__headerClickIgnores:(target)=>headerClickIgnores(target)," +
   "__renderModelChanges:(d)=>renderModelChanges(d)," +
   "__openChangeReport:(id)=>openChangeReport(id)," +
   "__chooseLayerMapping:(id)=>chooseLayerMapping(id)," +
@@ -235,6 +236,26 @@ const check = (name, ok, detail) => {
 };
 
 await sleep(80); // bootstrap: loadMaterials() + refreshModelChanges()
+
+// header facet clicks: dropdown and chevron targets must not trigger a sort --
+const facetClickTarget = { closest: (selector) => (selector === ".facet" ? {} : null) };
+const chevronClickTarget = { closest: (selector) => (selector === ".chevron" ? {} : null) };
+const plainHeaderTarget = { closest: () => null };
+check(
+  "facet dropdown click is ignored by the header sort",
+  S.__headerClickIgnores(facetClickTarget) === true,
+  `result=${S.__headerClickIgnores(facetClickTarget)}`,
+);
+check(
+  "chevron click is ignored by the header sort",
+  S.__headerClickIgnores(chevronClickTarget) === true,
+  `result=${S.__headerClickIgnores(chevronClickTarget)}`,
+);
+check(
+  "plain header click is not ignored",
+  S.__headerClickIgnores(plainHeaderTarget) === false,
+  `result=${S.__headerClickIgnores(plainHeaderTarget)}`,
+);
 
 // (a) banner count ------------------------------------------------
 const banner = S.__get("model-changes");

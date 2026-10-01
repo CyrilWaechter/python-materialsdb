@@ -145,6 +145,11 @@ function numericComparator(key, dir) {
   };
 }
 
+function headerClickIgnores(target) {
+  if (!target || typeof target.closest !== "function") return false;
+  return Boolean(target.closest(".chevron") || target.closest(".facet"));
+}
+
 function renderHeader() {
   const headerRow = $("header-row");
   headerRow.innerHTML = `<th></th>` + COLUMNS.map((col) => {
@@ -154,7 +159,7 @@ function renderHeader() {
   }).join("");
   headerRow.querySelectorAll("th[data-sort]").forEach((th) => {
     th.addEventListener("click", (event) => {
-      if (event.target.classList.contains("chevron")) return;
+      if (headerClickIgnores(event.target)) return;
       const key = th.dataset.sort;
       const numericCol = key === "lambda" || key === "thick";
       if (sortKey === key && numericCol) {
@@ -324,6 +329,7 @@ function toggleFacetDropdown(facetKey, anchor) {
   box.innerHTML = `<div class="label">${esc(facetKey)}</div>${values}` +
     `<div style="margin-top:.3rem"><button class="mock-button" data-clear>clear</button></div>`;
   anchor.parentElement.appendChild(box);
+  box.addEventListener("click", (event) => event.stopPropagation());
   box.addEventListener("change", (event) => {
     const input = event.target;
     if (input.dataset.value === undefined) return;

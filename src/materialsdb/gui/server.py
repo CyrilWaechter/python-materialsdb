@@ -38,7 +38,11 @@ def _float(value):
 
 
 def _resolve_display_name(names, lang):
-    return str(names.get(lang) or names.get("") or "")
+    for key in (lang, "", "en"):
+        value = names.get(key)
+        if value:
+            return str(value)
+    return str(next((value for value in names.values() if value), ""))
 
 
 def _active_model_path(state) -> str | None:

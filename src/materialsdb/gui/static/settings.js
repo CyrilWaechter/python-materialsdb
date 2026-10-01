@@ -1,7 +1,7 @@
 // materialsdb settings page: general options, colour scheme and palette editor.
 // Owns the shared API helper plus the general/colour-scheme controls, the
-// scheme list, the editor core (edit/preview/save) and the palette list
-// actions (rename/delete/export/import). Also owns the model-target selector
+// scheme list, the editor core (edit/preview/save-with-rename) and the palette
+// list actions (delete/export/import). Also owns the model-target selector
 // and the post-apply listener status poll.
 const TOKEN = window.MATERIALSDB_TOKEN;
 const $ = (id) => document.getElementById(id);
@@ -82,14 +82,12 @@ function renderSchemeList() {
 function updateEditorButtons() {
   const save = $("save-scheme");
   const saveAs = $("save-as-scheme");
-  const rename = $("rename-scheme");
   const remove = $("delete-scheme");
   const exportButton = $("export-scheme");
   if (save) save.disabled = !(draft && !draft.builtin);
   if (saveAs) saveAs.disabled = !draft;
   if (exportButton) exportButton.disabled = !draft;
   const custom = !!activeScheme && !schemeIsBuiltin(activeScheme);
-  if (rename) rename.disabled = !custom;
   if (remove) remove.disabled = !custom;
 }
 
@@ -286,16 +284,31 @@ async function saveDraft(asNewName) {
     setText("editor-status", "select a scheme before saving");
     return;
   }
-  const requested = typeof asNewName === "string" ? asNewName.trim() : "";
-  const name = requested || String(draft.name || "").trim();
+  const asNew = typeof asNewName === "string" && asNewName.trim() !== "";
+  const field = $("scheme-name");
+  const typed = field && typeof field.value === "string" ? field.value.trim() : "";
+  const name = asNew ? asNewName.trim() : typed || String(draft.name || "").trim();
   if (!name) {
     setText("editor-status", "enter a scheme name first");
     return;
   }
-  if (requested && requested !== draft.name && schemesList.some((scheme) => scheme.name === requested)) {
-    // save-as must create a new palette: never silently overwrite a custom one
-    setText("editor-status", `a scheme named ${requested} already exists — choose another name`);
+  if (name !== draft.name && schemesList.some((scheme) => scheme.name === name)) {
+    // never silently overwrite another palette, whether saving as or renaming
+    setText("editor-status", `a scheme named ${name} already exists — choose another name`);
     return;
+  }
+  const oldName = String(draft.name || "").trim();
+  if (!asNew && oldName && name !== oldName && !draft.builtin) {
+    // rename-on-save: the server follows the active scheme on rename
+    try {
+      await api(`/api/schemes/${encodeURIComponent(oldName)}/rename`, {
+        method: "POST",
+        body: JSON.stringify({ new_name: name }),
+      });
+    } catch (err) {
+      setText("editor-status", err.message);
+      return;
+    }
   }
   try {
     await api(`/api/schemes/${encodeURIComponent(name)}`, {
@@ -320,40 +333,6 @@ async function saveDraft(asNewName) {
     }
   }
   await refreshSchemeState();
-}
-
-async function renameSelected() {
-  const oldName = activeScheme;
-  if (!oldName) {
-    setText("editor-status", "select a scheme to rename");
-    return;
-  }
-  if (schemeIsBuiltin(oldName)) {
-    setText("editor-status", `built-in scheme ${oldName} cannot be renamed`);
-    return;
-  }
-  const field = $("scheme-name");
-  const newName = field ? field.value.trim() : "";
-  if (!newName) {
-    setText("editor-status", "enter a scheme name first");
-    return;
-  }
-  if (newName === oldName) {
-    setText("editor-status", `scheme is already named ${newName}`);
-    return;
-  }
-  try {
-    await api(`/api/schemes/${encodeURIComponent(oldName)}/rename`, {
-      method: "POST",
-      body: JSON.stringify({ new_name: newName }),
-    });
-  } catch (err) {
-    setText("editor-status", err.message);
-    return;
-  }
-  await refreshSchemeState();
-  await loadDraft(activeScheme);
-  setText("editor-status", `renamed ${oldName} to ${newName}`);
 }
 
 async function deleteSelected() {
@@ -596,9 +575,6 @@ function bindControls() {
       saveDraft(name);
     });
   }
-
-  const renameButton = $("rename-scheme");
-  if (renameButton) renameButton.addEventListener("click", () => renameSelected());
 
   const deleteButton = $("delete-scheme");
   if (deleteButton) deleteButton.addEventListener("click", () => deleteSelected());

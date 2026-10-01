@@ -53,19 +53,18 @@
 <section id="palette-section">
  <ul id="scheme-list"></ul>
  <label>Scheme name <input id="scheme-name" placeholder="palette name"></label>
+ <div id="palette-actions">
+  <button id="save-scheme" disabled>save</button>
+  <button id="save-as-scheme" disabled>save as…</button>
+  <button id="delete-scheme" disabled>delete</button>
+  <button id="export-scheme" disabled>export…</button>
+  <button id="import-scheme">import…</button>
+ </div>
  <input type="file" id="import-file" accept="application/json,.json" style="display:none">
  <label id="import-name-label" style="display:none">Import as <input id="import-name" placeholder="scheme name"></label>
  <div id="palette-rows"></div>
  <div id="preview-chips"></div>
  <div id="preview-section"></div>
- <div id="palette-actions">
-  <button id="save-scheme" disabled>save</button>
-  <button id="save-as-scheme" disabled>save as…</button>
-  <button id="rename-scheme" disabled>rename</button>
-  <button id="delete-scheme" disabled>delete</button>
-  <button id="export-scheme" disabled>export…</button>
-  <button id="import-scheme">import…</button>
- </div>
  <p id="editor-status"></p>
 </section>
 

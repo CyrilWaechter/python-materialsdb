@@ -14,9 +14,10 @@
 //       with Save disabled and Save as enabled; editing Concrete re-renders
 //       the preview and save-as posts the edited palette under a new name; a
 //       custom draft re-enables Save;
-//   (f) rename/delete post to the encoded /rename and /delete endpoints and
-//       importing an envelope shows the server's 409 conflict before a retry
-//       succeeds and selects the imported scheme;
+//   (f) saving a custom scheme with a changed name posts the encoded /rename
+//       first and then the renamed palette, delete posts to the encoded
+//       /delete endpoint, and importing an envelope shows the server's 409
+//       conflict before a retry succeeds and selects the imported scheme;
 //   (g) export writes the current draft envelope through a stubbed
 //       window.showSaveFilePicker, under the name suggested from #scheme-name,
 //       while a cancelled picker (AbortError) and a cancelled prompt fallback
@@ -548,17 +549,29 @@ mark(
 );
 delete globalThis.window.prompt;
 
-// rename: posts {"new_name": "Better"} to the encoded /rename endpoint ------
-const renameButton = S.__get("rename-scheme");
+// save on a custom scheme with a changed name renames first, then saves -----
+await S.__selectScheme("Mine");
 nameField.value = "Better";
-renameButton.dispatch("click");
+saveButton.dispatch("click");
 await sleep(50);
 const renamePost = schemePosts.find((entry) => entry.path === "/api/schemes/Mine/rename");
-const renameListed = S.__get("scheme").innerHTML.includes("Better");
+const renameIndex = schemePosts.indexOf(renamePost);
+const betterPost = schemePosts.find(
+  (entry) => entry.path === "/api/schemes/Better" && entry.body && entry.body.categories);
+const betterIndex = schemePosts.indexOf(betterPost);
+const betterCategories = betterPost ? Object.keys(betterPost.body.categories).length : 0;
+const betterListed = S.__get("scheme-list").innerHTML.includes("Better");
 mark(
-  "rename",
-  !!renamePost && JSON.stringify(renamePost.body) === JSON.stringify({ new_name: "Better" }) && renameListed,
-  `post=${JSON.stringify(renamePost)} listed=${renameListed}`,
+  "rename on save",
+  !!renamePost &&
+    JSON.stringify(renamePost.body) === JSON.stringify({ new_name: "Better" }) &&
+    !!betterPost &&
+    betterCategories === 17 &&
+    renameIndex >= 0 &&
+    renameIndex < betterIndex &&
+    betterListed,
+  `rename=${JSON.stringify(renamePost)} save=${JSON.stringify(betterPost)} ` +
+    `categories=${betterCategories} order=${renameIndex}<${betterIndex} listed=${betterListed}`,
 );
 
 // put Mine back so the delete exercise starts from a known custom scheme ----

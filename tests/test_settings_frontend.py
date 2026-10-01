@@ -15,8 +15,9 @@ re-renders the live preview and save-as posts the edited palette under the
 encoded name. Save-as refuses an existing name with an inline conflict instead
 of overwriting it, while a free name still posts. Selecting away from a dirty
 draft asks first: the edited scheme itself is a no-op, cancel keeps the draft
-and accept switches. Finally rename and delete post to their encoded
-endpoints, export writes the current draft envelope through a stubbed
+and accept switches. Finally saving a custom scheme under a changed name
+renames it (encoded /rename) before saving the palette, delete posts to its
+encoded endpoint, export writes the current draft envelope through a stubbed
 ``window.showSaveFilePicker`` (with the suggested file name) while a cancelled
 picker or prompt stays quiet, and importing
 surfaces the 409 conflict before the retry succeeds.
@@ -77,7 +78,7 @@ def test_settings_page_scheme_and_apply_colours():
     assert "export: OK" in result.stdout
     assert "export cancel quiet: OK" in result.stdout
     assert "export prompt cancel quiet: OK" in result.stdout
-    assert "rename: OK" in result.stdout
+    assert "rename on save: OK" in result.stdout
     assert "delete: OK" in result.stdout
     assert "import conflict: OK" in result.stdout
     assert "import success: OK" in result.stdout

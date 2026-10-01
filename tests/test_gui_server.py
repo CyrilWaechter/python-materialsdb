@@ -528,6 +528,14 @@ def test_materials_rows_carry_display_name(api):
     assert payload["materials"][0]["display_name"] == "Daemmstoff A"
 
 
+def test_resolve_display_name_falls_back():
+    from materialsdb.gui.server import _resolve_display_name
+
+    assert _resolve_display_name({"en": "Wall", "de": "Wand"}, "fr") == "Wall"
+    assert _resolve_display_name({"it": "Parete"}, "fr") == "Parete"
+    assert _resolve_display_name({}, "fr") == ""
+
+
 def test_detail_layers_array(api):
     server, _ = api
     status, payload = request(server, "GET", "/api/materials/00000000-0000-0000-0000-000000000001")
