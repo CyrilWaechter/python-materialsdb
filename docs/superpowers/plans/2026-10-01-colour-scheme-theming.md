@@ -831,7 +831,7 @@ Expected: FAIL (`apply_restyle` undefined; reused style keeps the old colour).
 
 - [ ] **Step 3: Implement**
 
-`_apply_style` reuse branch: when `style` came from the existing by-name map, locate its `IfcSurfaceStyleShading.SurfaceColour`; compare components as 0–255 ints (`round(value * 255)`) with the requested rgb; when any differ, assign `Red/Green/Blue = rgb[0..2]`. Never rewrite when equal, and leave unknown structures alone (create a new style instead of mutating a style we do not recognise? no — keep reuse by name, only update when a shading with a SurfaceColour is found).
+`_apply_style` reuse branch: when `style` came from the existing by-name map, locate its `IfcSurfaceStyleShading.SurfaceColour`; compare components as 0–255 ints (`round(value * 255)`) with the requested rgb; when any differ, assign `Red/Green/Blue = rgb[0..2]`. Never rewrite when equal. When the reused style has no `IfcSurfaceStyleShading` with a `SurfaceColour`, leave it as-is — unknown structures are never mutated.
 
 `apply_restyle`:
 
