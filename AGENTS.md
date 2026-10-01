@@ -35,7 +35,8 @@ ty check --project .                                                            
 
 ## Releases / versioning
 
-- Version lives in `pyproject.toml` `[project] version`. Bump it there.
+- Versioning follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html): backwards-compatible functionality bumps the **minor**, fixes only bump the **patch**. Pre-1.0 anything may change, but the same convention applies (feature releases bump `y` in `0.y.z`).
+- Version lives in `pyproject.toml` `[project] version`; `bonsai_addon/blender_manifest.toml` stays in sync for local extension builds. Bump both.
 - **NEVER `git push` without the user's explicit go-ahead, ever** — not for feature commits, not to unblock red CI. All checks (ruff check, ruff format --check, ty, full pytest — CI parity) MUST be green locally before any push is even proposed. (Lesson, 2026-09-12: pushed `f9c046d` without instruction and without full verification-induced-red-master.)
 - Publishing is automated: creating a GitHub release triggers `.github/workflows/pypi_publish.yml` (build + upload to PyPI). CI MUST be green on master BEFORE pushing a release commit/tag — a failed release run (e.g. the `chore: release <ver>` commit) publishes broken artifacts; if the CI run for the release commit fails, fix and re-tag (delete the tag/release first). Never rely on the v0.3.0-precedent pattern of "push → tag even if red".
 
