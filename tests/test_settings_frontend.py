@@ -5,7 +5,9 @@ general/colour-scheme controls: ``#scheme`` options come from ``/api/schemes``
 with the effective scheme from ``/api/config``, change events post the matching
 config patch, and apply-colours calls ``/api/model/restyle`` and reports the
 queued count plus the listener's applied detail. Without a connected model the
-button is disabled and the hint is shown.
+button is disabled and the hint is shown. The palette editor core is covered
+too: cloning renders all 17 rows, an input event re-renders the live preview
+and save-as posts the edited palette under the encoded name.
 
 Skipped automatically when node is unavailable."""
 
@@ -46,3 +48,6 @@ def test_settings_page_scheme_and_apply_colours():
     assert "scheme post: OK" in result.stdout
     assert "apply: OK" in result.stdout
     assert "no-model hint: OK" in result.stdout
+    assert "editor rows: OK" in result.stdout
+    assert "preview: OK" in result.stdout
+    assert "save payload: OK" in result.stdout

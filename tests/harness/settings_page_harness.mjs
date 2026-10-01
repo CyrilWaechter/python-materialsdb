@@ -1,11 +1,14 @@
-// Headless check of the settings page general options and colour scheme.
+// Headless check of the settings page general options, colour scheme and the
+// palette editor core.
 // Runs the real static/settings.js in a Node VM with DOM stubs and asserts:
 //   (a) #scheme lists the server schemes and shows the effective scheme from
 //       GET /api/config;
 //   (b) changing a control posts the matching /api/config patch;
 //   (c) apply-colours is enabled with a connected model, calls
 //       /api/model/restyle and reports the queued count + listener detail;
-//   (d) without a model it is disabled and the hint is visible.
+//   (d) without a model it is disabled and the hint is visible;
+//   (e) cloning renders all 17 editor rows, editing Concrete re-renders the
+//       preview and save-as posts the edited palette under the encoded name.
 // Usage: node settings_page_harness.mjs <path/to/settings.js>
 
 import fs from "node:fs";
@@ -76,6 +79,20 @@ const config = { lang: "fr", country: "CH", scheme: "Lesosai", schemes: ["Lesosa
 let changesModelPath = "/m/x.ifc";
 let restyleCalls = 0;
 const posts = [];
+const schemePosts = [];
+const schemeList = [{ name: "Lesosai", builtin: true }, { name: "Mine", builtin: false }];
+
+// Full 17-category palette served for scheme detail GETs (one entry per schema
+// category), so the editor's "17 rows" assertion is meaningful.
+const CATEGORY_NAMES = [
+  "Others", "Water_Proof", "Vapour_Proof", "Concrete", "Wood_Timberproducts",
+  "Insulation", "Masonry", "Metal", "Mortar", "Plastics", "Stone", "Composite",
+  "Films", "Render", "Covering", "Glas", "Soil",
+];
+const schemeCategories = Object.fromEntries(CATEGORY_NAMES.map((name, index) => [
+  name,
+  { hatch: "", color: [(index * 11) % 256, (index * 29) % 256, (index * 47) % 256] },
+]));
 async function fakeFetch(path, options = {}) {
   const json = (data) => new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } });
   if (path === "/api/config" && (!options.method || options.method === "GET")) return json(config);
@@ -84,7 +101,18 @@ async function fakeFetch(path, options = {}) {
     config.ignore_producer_color = JSON.parse(options.body).ignore_producer_color ?? config.ignore_producer_color;
     return json({ ok: true });
   }
-  if (path === "/api/schemes") return json({ schemes: [{ name: "Lesosai", builtin: true }, { name: "Mine", builtin: false }], error: null });
+  if (path === "/api/schemes") return json({ schemes: schemeList, error: null });
+  if (path.startsWith("/api/schemes/") && options.method === "POST") {
+    const name = decodeURIComponent(path.slice("/api/schemes/".length));
+    const body = JSON.parse(options.body);
+    schemePosts.push({ name, path, body });
+    if (!schemeList.some((entry) => entry.name === name)) schemeList.push({ name, builtin: false });
+    return json({ name, builtin: false, ok: true });
+  }
+  if (path.startsWith("/api/schemes/") && (!options.method || options.method === "GET")) {
+    const name = decodeURIComponent(path.slice("/api/schemes/".length));
+    return json({ name, builtin: name === "Lesosai", categories: schemeCategories });
+  }
   if (path === "/api/model/changes") return json({ model_path: changesModelPath, counts: {} });
   if (path === "/api/model/restyle") { restyleCalls += 1; return json({ queued: 3, skipped: [], scheme: "Lesosai" }); }
   if (path === "/api/listener/clients") return json({ clients: [{ model_path: "/m/x.ifc", last_status: { status: "applied", detail: "3 material(s) restyled" } }] });
@@ -194,6 +222,62 @@ mark(
   "no-model hint",
   applyButton.disabled === true && hint.style.display !== "none" && restyleCalls === 1,
   `disabled=${applyButton.disabled} hint=${JSON.stringify(hint.style.display)} restyleCalls=${restyleCalls}`,
+);
+
+// (e) palette editor: clone the selected (built-in) palette, edit Concrete,
+// save as a new name ------------------------------------------------------
+const cloneButton = S.__get("clone-scheme");
+const rowsBox = S.__get("palette-rows");
+const saveAsButton = S.__get("save-as-scheme");
+const nameField = S.__get("scheme-name");
+const emptyBeforeClone = rowsBox.innerHTML === "";
+const saveAsDisabledBefore = saveAsButton.disabled === true;
+cloneButton.dispatch("click");
+await sleep(50);
+const rowCategories = new Set();
+const categoryRe = /data-category="([^"]+)"/g;
+let rowMatch;
+while ((rowMatch = categoryRe.exec(rowsBox.innerHTML)) !== null) rowCategories.add(rowMatch[1]);
+const hexFields = (rowsBox.innerHTML.match(/data-role="hex"/g) || []).length;
+mark(
+  "editor rows",
+  emptyBeforeClone && saveAsDisabledBefore && rowCategories.size === 17 && hexFields === 17 && saveAsButton.disabled === false,
+  `empty=${emptyBeforeClone} disabledBefore=${saveAsDisabledBefore} categories=${rowCategories.size} hexFields=${hexFields} saveAsDisabled=${saveAsButton.disabled}`,
+);
+
+// editing a colour input updates the draft and both live previews ---------
+rowsBox.dispatch("input", { target: { dataset: { category: "Concrete" }, value: "#112233" } });
+await sleep(10);
+const chipsHtml = S.__get("preview-chips").innerHTML;
+const sectionHtml = S.__get("preview-section").innerHTML;
+const chipCount = (chipsHtml.match(/class="chip"/g) || []).length;
+const sectionDivs = (sectionHtml.match(/<div/g) || []).length;
+mark(
+  "preview",
+  chipsHtml.includes("#112233") && chipCount === 17 && sectionHtml.includes("#112233") && sectionDivs === 5,
+  `chips=${JSON.stringify(chipsHtml)} section=${JSON.stringify(sectionHtml)}`,
+);
+
+// save as… posts the draft under the #scheme-name and refreshes the list --
+nameField.value = "Studio Palette";
+saveAsButton.dispatch("click");
+await sleep(50);
+const savedPost = schemePosts[schemePosts.length - 1];
+const savedConcrete = savedPost && savedPost.body && savedPost.body.categories && savedPost.body.categories.Concrete;
+const categoryCount = savedPost && savedPost.body && savedPost.body.categories ? Object.keys(savedPost.body.categories).length : 0;
+const savedColour =
+  savedConcrete &&
+  savedConcrete.hatch === "" &&
+  Array.isArray(savedConcrete.color) &&
+  savedConcrete.color.length === 3 &&
+  savedConcrete.color[0] === 17 &&
+  savedConcrete.color[1] === 34 &&
+  savedConcrete.color[2] === 51;
+const listRefreshed = S.__get("scheme").innerHTML.includes("Studio Palette");
+mark(
+  "save payload",
+  !!savedPost && savedPost.path === "/api/schemes/Studio%20Palette" && categoryCount === 17 && savedColour && listRefreshed,
+  `post=${JSON.stringify(savedPost)} categories=${categoryCount} colour=${JSON.stringify(savedConcrete)} refreshed=${listRefreshed}`,
 );
 
 if (failures.length) {

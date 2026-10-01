@@ -1,15 +1,19 @@
-// materialsdb settings page: general options and colour scheme.
-// The palette editor (clone/rename/delete/export/import) is added by later
-// tasks; this file owns the shared API helper plus the general/colour-scheme
-// controls, the scheme list and the apply-to-model action.
+// materialsdb settings page: general options, colour scheme and palette editor.
+// The palette rename/delete/export/import actions are added by a later task;
+// this file owns the shared API helper plus the general/colour-scheme controls,
+// the scheme list, the editor core (clone/edit/preview/save) and the
+// apply-to-model action.
 const TOKEN = window.MATERIALSDB_TOKEN;
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 
+const PREVIEW_SAMPLES = ["Render", "Masonry", "Insulation", "Wood_Timberproducts", "Concrete"];
+
 let schemesList = [];     // [{name, builtin}] from GET /api/schemes
 let activeScheme = null;  // effective scheme, from GET /api/config
 let modelPath = null;     // active model path, from GET /api/model/changes
+let draft = null;         // palette being edited: {name, categories, builtin, dirty}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -30,6 +34,28 @@ function setText(id, text) {
   return text;
 }
 
+const deepCopy = (value) => JSON.parse(JSON.stringify(value));
+
+function hexColor(color) {
+  const rgb = Array.isArray(color) ? color : [0, 0, 0];
+  const part = (value) => {
+    const number = Number(value);
+    const clamped = Number.isFinite(number) ? Math.min(255, Math.max(0, Math.round(number))) : 0;
+    return clamped.toString(16).padStart(2, "0");
+  };
+  return `#${part(rgb[0])}${part(rgb[1])}${part(rgb[2])}`;
+}
+
+function parseHex(value) {
+  const text = String(value ?? "").trim().replace(/^#/, "");
+  if (!/^[0-9a-f]{6}$/i.test(text)) return null;
+  return [
+    parseInt(text.slice(0, 2), 16),
+    parseInt(text.slice(2, 4), 16),
+    parseInt(text.slice(4, 6), 16),
+  ];
+}
+
 function populateSchemeSelect() {
   const select = $("scheme");
   if (!select) return;
@@ -42,8 +68,60 @@ function renderSchemeList() {
   const list = $("scheme-list");
   if (!list) return;
   list.innerHTML = schemesList.map((scheme) =>
-    `<li data-name="${esc(scheme.name)}"${scheme.name === activeScheme ? ' class="selected"' : ""}>` +
-    `${esc(scheme.name)}${scheme.builtin ? '<span class="builtin">built-in</span>' : ""}</li>`).join("");
+    `<li data-name="${esc(scheme.name)}" data-builtin="${scheme.builtin ? "true" : "false"}"` +
+    `${scheme.name === activeScheme ? ' class="selected"' : ""}>` +
+    `${esc(scheme.name)}${scheme.builtin ? '<span class="builtin">built-in &middot; read-only</span>' : ""}</li>`).join("");
+}
+
+function updateEditorButtons() {
+  const save = $("save-scheme");
+  const saveAs = $("save-as-scheme");
+  const clone = $("clone-scheme");
+  if (save) save.disabled = !(draft && !draft.builtin);
+  if (saveAs) saveAs.disabled = !draft;
+  if (clone) clone.disabled = !activeScheme;
+}
+
+function renderEditor() {
+  const rows = $("palette-rows");
+  if (rows) {
+    rows.innerHTML = !draft ? "" : Object.keys(draft.categories).map((category) => {
+      const hex = hexColor((draft.categories[category] || {}).color);
+      return `<span class="category" data-category="${esc(category)}">${esc(category)}</span>` +
+        `<input type="color" data-category="${esc(category)}" value="${hex}">` +
+        `<input type="text" data-role="hex" data-category="${esc(category)}" value="${hex}">`;
+    }).join("");
+  }
+  updateEditorButtons();
+}
+
+function renderPreview() {
+  const chips = $("preview-chips");
+  const section = $("preview-section");
+  const categories = draft ? draft.categories : null;
+  if (chips) {
+    chips.innerHTML = !categories ? "" : Object.keys(categories).map((category) => {
+      const hex = hexColor((categories[category] || {}).color);
+      return `<span class="chip" style="background:${hex}" title="${esc(category)} ${hex}">${esc(category)}</span>`;
+    }).join("");
+  }
+  if (section) {
+    section.innerHTML = !categories ? "" : PREVIEW_SAMPLES.map((category) => {
+      const style = categories[category];
+      const hex = style ? hexColor(style.color) : "#ffffff";
+      return `<div style="background:${hex}" title="${esc(category)}"></div>`;
+    }).join("");
+  }
+}
+
+function syncRowInput(category, role, hex) {
+  const rows = $("palette-rows");
+  if (!rows || typeof rows.querySelector !== "function") return;
+  const selector = role === "hex"
+    ? `input[data-role="hex"][data-category="${category}"]`
+    : `input[type="color"][data-category="${category}"]`;
+  const input = rows.querySelector(selector);
+  if (input) input.value = hex;
 }
 
 async function saveConfig(patch) {
@@ -74,13 +152,116 @@ function applyModelState(changes) {
   if (hint) hint.style.display = modelPath ? "none" : "";
 }
 
-function selectScheme(name) {
+async function loadDraft(name) {
+  const entry = schemesList.find((scheme) => scheme.name === name);
+  if (!name || (entry && entry.builtin)) {
+    draft = null;
+    renderEditor();
+    renderPreview();
+    return;
+  }
+  try {
+    const payload = await api(`/api/schemes/${encodeURIComponent(name)}`);
+    if (activeScheme !== name) return; // a newer selection won the race
+    draft = payload.builtin
+      ? null
+      : { name: payload.name || name, categories: deepCopy(payload.categories || {}), builtin: false, dirty: false };
+  } catch (err) {
+    draft = null;
+    setText("editor-status", err.message);
+  }
+  renderEditor();
+  renderPreview();
+}
+
+async function refreshSchemeState() {
+  const results = await Promise.allSettled([api("/api/config"), api("/api/schemes")]);
+  const message = (reason) => (reason && reason.message ? reason.message : String(reason));
+  if (results[1].status === "fulfilled") {
+    const payload = results[1].value;
+    if (Array.isArray(payload.schemes)) schemesList = payload.schemes;
+    if (payload.error) setText("editor-status", payload.error);
+  } else {
+    setText("editor-status", `could not refresh schemes: ${message(results[1].reason)}`);
+  }
+  if (results[0].status === "fulfilled" && results[0].value.scheme) activeScheme = results[0].value.scheme;
+  populateSchemeSelect();
+  renderSchemeList();
+  updateEditorButtons();
+}
+
+async function selectScheme(name) {
   if (!name) return;
   activeScheme = name;
   const select = $("scheme");
   if (select) select.value = name;
   renderSchemeList();
-  saveConfig({ scheme: name }).catch((err) => setText("editor-status", err.message));
+  try {
+    await saveConfig({ scheme: name });
+  } catch (err) {
+    setText("editor-status", err.message);
+  }
+  await loadDraft(name);
+}
+
+async function cloneSelected() {
+  const name = activeScheme;
+  if (!name) {
+    setText("editor-status", "select a scheme to clone");
+    return;
+  }
+  try {
+    const payload = await api(`/api/schemes/${encodeURIComponent(name)}`);
+    draft = {
+      name: payload.name || name,
+      categories: deepCopy(payload.categories || {}),
+      builtin: !!payload.builtin,
+      dirty: true,
+    };
+    const field = $("scheme-name");
+    if (field) field.value = `${draft.name} copy`;
+    renderEditor();
+    renderPreview();
+    setText("editor-status", `cloned ${name} — edit, then save as a new name`);
+  } catch (err) {
+    setText("editor-status", err.message);
+  }
+}
+
+async function saveDraft(asNewName) {
+  if (!draft) {
+    setText("editor-status", "clone a scheme before saving");
+    return;
+  }
+  const requested = typeof asNewName === "string" ? asNewName.trim() : "";
+  const name = requested || String(draft.name || "").trim();
+  if (!name) {
+    setText("editor-status", "enter a scheme name first");
+    return;
+  }
+  try {
+    await api(`/api/schemes/${encodeURIComponent(name)}`, {
+      method: "POST",
+      body: JSON.stringify({ categories: draft.categories }),
+    });
+  } catch (err) {
+    setText("editor-status", err.message);
+    return;
+  }
+  draft.name = name;
+  draft.builtin = false;
+  draft.dirty = false;
+  updateEditorButtons();
+  setText("editor-status", `saved ${name}`);
+  if (activeScheme !== name) {
+    activeScheme = name;
+    try {
+      await saveConfig({ scheme: name });
+    } catch (err) {
+      setText("editor-status", err.message);
+    }
+  }
+  await refreshSchemeState();
 }
 
 async function loadSettings() {
@@ -101,6 +282,7 @@ async function loadSettings() {
   populateSchemeSelect();
   renderSchemeList();
   applyModelState(results[2].status === "fulfilled" ? results[2].value : null);
+  await loadDraft(activeScheme);
 }
 
 async function applyColours() {
@@ -144,13 +326,7 @@ function bindControls() {
   bind("ignore-producer-color", (control) => ({ ignore_producer_color: control.checked }));
 
   const select = $("scheme");
-  if (select) {
-    select.addEventListener("change", () => {
-      activeScheme = select.value;
-      renderSchemeList();
-      saveConfig({ scheme: activeScheme }).catch((err) => setText("editor-status", err.message));
-    });
-  }
+  if (select) select.addEventListener("change", () => selectScheme(select.value));
 
   const applyButton = $("apply-colours");
   if (applyButton) applyButton.addEventListener("click", applyColours);
@@ -163,6 +339,53 @@ function bindControls() {
       if (item) selectScheme(item.dataset.name);
     });
   }
+
+  const cloneButton = $("clone-scheme");
+  if (cloneButton) cloneButton.addEventListener("click", () => cloneSelected());
+
+  const saveButton = $("save-scheme");
+  if (saveButton) saveButton.addEventListener("click", () => saveDraft());
+
+  const saveAsButton = $("save-as-scheme");
+  if (saveAsButton) {
+    saveAsButton.addEventListener("click", () => {
+      const field = $("scheme-name");
+      const name = field ? field.value.trim() : "";
+      if (!name) {
+        setText("editor-status", "enter a scheme name first");
+        return;
+      }
+      saveDraft(name);
+    });
+  }
+
+  const rows = $("palette-rows");
+  if (rows) {
+    rows.addEventListener("input", (event) => {
+      if (!draft) return;
+      const target = event && event.target ? event.target : {};
+      const dataset = target.dataset || {};
+      const category = dataset.category;
+      if (!category || !draft.categories[category]) return;
+      const color = parseHex(target.value);
+      if (!color) return;
+      draft.categories[category].color = color;
+      draft.dirty = true;
+      syncRowInput(category, dataset.role === "hex" ? "color" : "hex", hexColor(color));
+      renderPreview();
+    });
+  }
+
+  updateEditorButtons();
+}
+
+if (window && typeof window.addEventListener === "function") {
+  window.addEventListener("beforeunload", (event) => {
+    if (!draft || !draft.dirty) return undefined;
+    event.preventDefault();
+    event.returnValue = true;
+    return true;
+  });
 }
 
 bindControls();
