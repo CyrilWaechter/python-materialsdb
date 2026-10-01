@@ -46,22 +46,13 @@ shared objectify tree. Only revisit if the corpus grows significantly or
 ≈4 s becomes productively annoying. SQLite stays the single writer in that
 design (batch from the main thread or per-thread connections).
 
-## Colour scheme selection (GUI) + hatch rendering
+## Hatch rendering
 
-**Date opened:** 2026-09-14
+**Date opened:** 2026-09-14; narrowed 2026-10-01 — the colour scheme
+selection, palette editor and model restyle graduated to
+`docs/superpowers/specs/2026-10-01-colour-scheme-theming-design.md`.
 
-Surface styles are named `"color <int>"` when a material carries a producer
-colour, else `"category <Category>"` coloured from the scheme
-(`material_builder.SCHEMES`, default `"Lesosai"` = the historical
-`CATEGORIES` palette). The server resolves the style into the push payload
-(`style_name`/`style_color`), so the add-on stays palette-agnostic.
-
-- **Scheme selector:** a Settings dropdown to pick the active scheme
-  (default "Lesosai"), persisted in `config.json` next to `lang`/`country`.
-  `SCHEMES` is already a named registry; adding palettes is data-only.
-- **Override producer colour:** an option to ignore producer colours and use
-  the scheme's category colour everywhere (today the producer colour wins).
-- **Hatch:** `CATEGORIES[...]["hatch"]` is reserved but unused. Applying a
-  hatch/`IfcSurfaceStyleRendering`/texture pattern is a larger feature (IFC
-  representation + Bonsai display); spec needed before implementation.
+`CategoryStyle.hatch` is reserved but unused. Applying a
+hatch/`IfcSurfaceStyleRendering`/texture pattern is a larger feature (IFC
+representation + Bonsai display); spec needed before implementation.
 
