@@ -623,3 +623,75 @@ def test_restyle_refreshes_reused_style_and_live_material():
     assert (round(colour.Red * 255), round(colour.Green * 255), round(colour.Blue * 255)) == (0, 255, 0)
     assert tool.Ifc.get_object(style) is blender_material  # same style, same link
     assert _base_colour(blender_material) != base_before  # viewport material refreshed
+
+
+def test_construction_resend_repaints_displayed_style(tmp_path):
+    """Re-sending a construction with a changed palette colour reuses and
+    recolours the IFC style; the already-linked Blender material (viewport
+    diffuse_color and Principled Base Color) must follow."""
+    import bpy
+
+    server = None
+    old_cache_env = None
+    try:
+        server, cache_dir, info, old_cache_env = _seeded_server(tmp_path)
+        port, token = info["port"], info["token"]
+        client = ListenerClient()
+        client.register(bonsai_addon._model_path())
+
+        status, builtin = _request(port, token, "GET", "/api/schemes/Lesosai")
+        assert status == 200, builtin
+        palette = {name: dict(style) for name, style in builtin["categories"].items()}
+
+        def set_concrete(rgb):
+            palette["Concrete"] = {"hatch": "", "color": list(rgb)}
+            status, body = _request(port, token, "POST", "/api/schemes/Mine", {"categories": palette})
+            assert status == 200, body
+            status, body = _request(port, token, "POST", "/api/config", {"scheme": "Mine"})
+            assert status == 200, body
+
+        def send(construction):
+            status, body = _request(
+                port,
+                token,
+                "POST",
+                "/api/listener/send",
+                {"client_id": client.client_id, "action": "add_construction", "construction": construction},
+            )
+            assert status == 200, body
+
+        def drain():
+            previous = bonsai_addon._CLIENT
+            bonsai_addon._CLIENT = client
+            try:
+                assert bonsai_addon._poll_timer() == 1.0
+            finally:
+                bonsai_addon._CLIENT = previous
+
+        construction = {
+            "name": "Mur b\u00e9ton",
+            "design_usage": "consDesignForWall",
+            "layers": [{"material_id": "00000000-0000-0000-0000-000000000002", "thickness_m": 0.15}],
+        }
+        set_concrete((7, 8, 9))
+        send(construction)
+        drain()
+
+        file = tool.Ifc.get()
+        style = next(s for s in file.by_type("IfcSurfaceStyle") if s.Name == "category Concrete")
+        blender_material = tool.Ifc.get_object(style)
+        assert isinstance(blender_material, bpy.types.Material)
+        assert tuple(round(c * 255) for c in blender_material.diffuse_color[:3]) == (7, 8, 9)
+
+        set_concrete((10, 20, 30))
+        send(construction)
+        drain()
+
+        colour = next(s for s in style.Styles if s.is_a("IfcSurfaceStyleShading")).SurfaceColour
+        assert (round(colour.Red * 255), round(colour.Green * 255), round(colour.Blue * 255)) == (10, 20, 30)
+        assert tool.Ifc.get_object(style) is blender_material
+        assert tuple(round(c * 255) for c in blender_material.diffuse_color[:3]) == (10, 20, 30)
+        assert tuple(round(c * 255) for c in _base_colour(blender_material)[:3]) == (10, 20, 30)
+    finally:
+        if server is not None:
+            _stop_server(server, old_cache_env)
