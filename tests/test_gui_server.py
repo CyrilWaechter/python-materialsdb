@@ -14,14 +14,25 @@ pytest.importorskip("ifcopenshell")  # export/session tests in Task 3 need it; h
 
 
 @pytest.fixture(autouse=True)
-def pinned_fr_ch_config(monkeypatch):
+def pinned_fr_ch_config(monkeypatch, tmp_path):
+    from materialsdb import config
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("materialsdb.config.get_config_dir", lambda: config_dir)
     monkeypatch.setattr("materialsdb.config.get_lang", lambda: "fr")
     monkeypatch.setattr("materialsdb.config.get_country", lambda: "CH")
     recorded = {}
-    monkeypatch.setattr(
-        "materialsdb.config.set_param",
-        lambda param, value: recorded.__setitem__(param, value),
-    )
+    # the config dir is redirected to tmp_path, so the real set_param is safe
+    # to call: preference round-trips (scheme, ignore_producer_color) go to
+    # disk while test_config_roundtrip still reads the recorded calls
+    real_set_param = config.set_param
+
+    def recording_set_param(param, value):
+        recorded[param] = value
+        real_set_param(param, value)
+
+    monkeypatch.setattr("materialsdb.config.set_param", recording_set_param)
     pytest.config_recorded = recorded  # ty: ignore[unresolved-attribute] - dynamic test-global, read in test_config_roundtrip
 
 
@@ -1649,3 +1660,92 @@ def test_composer_incoming_capped_at_20(api):
     status, listed = request(server, "GET", "/api/composer/incoming", token=state.token)
     assert len(listed["incoming"]) == 20
     assert listed["incoming"][0]["name"] == "c21"  # newest first
+
+
+def _custom_palette():
+    from materialsdb.ifc.material_builder import CATEGORIES
+
+    return {name: {"hatch": "", "color": list(style["color"])} for name, style in CATEGORIES.items()}
+
+
+def test_scheme_api_crud_and_active_reset(api):
+    server, state = api
+    payload = {"categories": _custom_palette()}
+
+    status, _ = request(server, "POST", "/api/schemes/Mon%20Palett%C3%A9", payload=payload, token=state.token)
+    assert status == 200
+    status, body = request(server, "GET", "/api/schemes")
+    assert {"name": "Mon Paletté", "builtin": False} in body["schemes"]
+    assert {"name": "Lesosai", "builtin": True} in body["schemes"]
+
+    status, body = request(server, "GET", "/api/schemes/Mon%20Palett%C3%A9")
+    assert status == 200 and body["categories"]["Concrete"]["color"] == [0, 255, 0]
+
+    status, _ = request(server, "POST", "/api/config", payload={"scheme": "Mon Paletté"}, token=state.token)
+    assert status == 200
+    assert request(server, "GET", "/api/config")[1]["scheme"] == "Mon Paletté"
+
+    status, _ = request(
+        server, "POST", "/api/schemes/Mon%20Palett%C3%A9/rename", payload={"new_name": "Palette 2"}, token=state.token
+    )
+    assert status == 200
+    assert request(server, "GET", "/api/config")[1]["scheme"] == "Palette 2"
+
+    status, _ = request(server, "POST", "/api/schemes/Palette%202/delete", payload={}, token=state.token)
+    assert status == 200
+    assert request(server, "GET", "/api/config")[1]["scheme"] == "Lesosai"
+
+
+def test_scheme_api_rejects_builtin_and_invalid(api):
+    server, state = api
+    assert (
+        request(server, "POST", "/api/schemes/Lesosai", payload={"categories": _custom_palette()}, token=state.token)[0]
+        == 400
+    )
+    assert (
+        request(server, "POST", "/api/schemes/import", payload={"categories": _custom_palette()}, token=state.token)[0]
+        == 400
+    )
+    assert (
+        request(
+            server,
+            "POST",
+            "/api/schemes/Bad",
+            payload={"categories": {"Concrete": {"hatch": "", "color": [0, 0, 0]}}},
+            token=state.token,
+        )[0]
+        == 400
+    )
+    assert request(server, "POST", "/api/config", payload={"scheme": "Nope"}, token=state.token)[0] == 400
+
+
+def test_scheme_export_import_and_conflict(api):
+    server, state = api
+    status, envelope = request(server, "GET", "/api/schemes/Lesosai/export")
+    assert status == 200 and envelope["format"] == "materialsdb-scheme/1"
+
+    envelope["name"] = "Imported palette"
+    status, body = request(server, "POST", "/api/schemes/import", payload=envelope, token=state.token)
+    assert status == 200 and body["name"] == "Imported palette"
+
+    status, body = request(server, "POST", "/api/schemes/import", payload=envelope, token=state.token)
+    assert status == 409
+
+
+def test_scheme_api_surfaces_corrupt_file(api, tmp_path):
+    server, _ = api
+    (tmp_path / "config" / "schemes.json").write_text("{not json")
+    status, body = request(server, "GET", "/api/schemes")
+    assert status == 200
+    assert [item["name"] for item in body["schemes"]] == ["Lesosai"]
+    assert body["error"]
+
+
+def test_config_scheme_and_override_roundtrip(api):
+    server, state = api
+    status, _ = request(server, "POST", "/api/config", payload={"ignore_producer_color": True}, token=state.token)
+    assert status == 200
+    body = request(server, "GET", "/api/config")[1]
+    assert body["ignore_producer_color"] is True
+    assert body["scheme"] == "Lesosai"
+    assert "Lesosai" in body["schemes"]

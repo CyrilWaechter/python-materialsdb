@@ -9,7 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from materialsdb import config, utils
+from materialsdb import config, schemes, utils
 from materialsdb.construction import finite_or_none
 from materialsdb.ifc.material_builder import add_material
 from materialsdb.store import FINGERPRINT_SCHEME
@@ -787,10 +787,25 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
 
             self._send(200, {"constructions": cm.list_constructions()})
             return
+        if parsed.path == "/api/schemes":
+            self._schemes_list()
+            return
+        if parsed.path.startswith("/api/schemes/"):
+            self._scheme_get(parsed)
+            return
         if parsed.path == "/api/config":
             from materialsdb import config as cfg
 
-            self._send(200, {"lang": cfg.get_lang(), "country": cfg.get_country()})
+            self._send(
+                200,
+                {
+                    "lang": cfg.get_lang(),
+                    "country": cfg.get_country(),
+                    "scheme": cfg.get_scheme() or schemes.DEFAULT_SCHEME,
+                    "schemes": list(schemes.available()),
+                    "ignore_producer_color": cfg.get_ignore_producer_color(),
+                },
+            )
             return
         if parsed.path == "/api/listener/poll":
             if not self._authorized():
@@ -924,6 +939,10 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
                 self._composer_push(payload)
             elif parsed.path == "/api/composer/incoming/consume":
                 self._composer_consume(payload)
+            elif parsed.path == "/api/schemes/import":
+                self._scheme_import(payload)
+            elif parsed.path.startswith("/api/schemes/"):
+                self._scheme_post(parsed, payload)
             elif parsed.path.startswith("/api/constructions/"):
                 self._construction_save(store_, parsed, payload)
             elif parsed.path == "/api/listener/register":
@@ -1070,7 +1089,102 @@ class GuiHandler(http.server.BaseHTTPRequestHandler):
             config.set_lang(str(lang).lower())
         if country:
             config.set_country(str(country).upper())
+        if "scheme" in payload:
+            scheme = str(payload["scheme"])
+            if scheme not in schemes.available():
+                self._send(400, {"error": f"unknown scheme: {scheme}"})
+                return
+            config.set_scheme(scheme)
+        if "ignore_producer_color" in payload:
+            config.set_ignore_producer_color(bool(payload["ignore_producer_color"]))
         self._send(200, {"ok": True})
+
+    def _schemes_list(self):
+        names = list(schemes.available())
+        self._send(
+            200,
+            {
+                "schemes": [{"name": name, "builtin": name in schemes.BUILTIN} for name in names],
+                "error": schemes.load_error(),
+            },
+        )
+
+    def _scheme_get(self, parsed):
+        rest = unquote(parsed.path[len("/api/schemes/") :])
+        export = rest.endswith("/export")
+        name = rest[: -len("/export")] if export else rest
+        palette = schemes.get(name)
+        if palette is None:
+            self._send(404, {"error": f"unknown scheme: {name}"})
+            return
+        if export:
+            self._send(200, schemes.export_payload(name))
+            return
+        self._send(200, {"name": name, "builtin": name in schemes.BUILTIN, "categories": palette})
+
+    def _scheme_post(self, parsed, payload):
+        rest = unquote(parsed.path[len("/api/schemes/") :])
+        if rest.endswith("/rename"):
+            self._scheme_rename(rest[: -len("/rename")], payload)
+        elif rest.endswith("/delete"):
+            self._scheme_delete(rest[: -len("/delete")])
+        else:
+            self._scheme_save(rest, payload)
+
+    def _scheme_save(self, name, payload):
+        if name in schemes.BUILTIN:
+            self._send(400, {"error": f"built-in scheme {name!r} cannot be modified"})
+            return
+        categories = payload.get("categories") if isinstance(payload, dict) else None
+        try:
+            schemes.save(name, categories)
+        except schemes.SchemeError as err:
+            self._send(400, {"error": str(err)})
+            return
+        self._send(200, {"ok": True})
+
+    def _scheme_rename(self, name, payload):
+        new_name = payload.get("new_name") if isinstance(payload, dict) else None
+        if not isinstance(new_name, str):
+            self._send(400, {"error": "new_name must be a string"})
+            return
+        try:
+            schemes.rename(name, new_name)
+        except schemes.SchemeError as err:
+            self._send(400, {"error": str(err)})
+            return
+        if config.get_scheme() == name:
+            config.set_scheme(new_name)
+        self._send(200, {"ok": True})
+
+    def _scheme_delete(self, name):
+        if schemes.get(name) is None:
+            self._send(404, {"error": f"unknown scheme: {name}"})
+            return
+        if name in schemes.BUILTIN:
+            self._send(400, {"error": f"built-in scheme {name!r} cannot be deleted"})
+            return
+        active = config.get_scheme() == name
+        try:
+            schemes.delete(name)
+        except schemes.SchemeError as err:
+            self._send(400, {"error": str(err)})
+            return
+        if active:
+            config.set_scheme(schemes.DEFAULT_SCHEME)
+        self._send(200, {"ok": True})
+
+    def _scheme_import(self, payload):
+        name = payload.get("name") if isinstance(payload, dict) else None
+        if isinstance(name, str) and name in schemes.available():
+            self._send(409, {"error": f"a scheme named {name!r} already exists"})
+            return
+        try:
+            imported = schemes.import_payload(payload)
+        except schemes.SchemeError as err:
+            self._send(400, {"error": str(err)})
+            return
+        self._send(200, {"name": imported})
 
     def _refresh(self, payload):
         job = self.state.refresh_job
