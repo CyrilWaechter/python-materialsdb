@@ -799,3 +799,24 @@ def test_construction_push_reloads_existing_instances(tmp_path):
     finally:
         if server is not None:
             _stop_server(server, old_cache_env)
+
+
+def test_bonsai_bootstrap_contract():
+    """The listener must never import `bonsai.tool` first: Blender can enable it
+    before Bonsai, and a raw `bonsai.tool` import triggers Bonsai's circular
+    import. The bootstrap sets the registered extension package (needed by
+    `bonsai.bim` at import time) and imports `bonsai.bim` first; once Bonsai is
+    up it must be a no-op."""
+    import bonsai
+
+    assert bonsai.REGISTERED_BBIM_PACKAGE
+    assert bonsai.REGISTERED_BBIM_PACKAGE.endswith(".bonsai")
+    assert getattr(bonsai, "bim", None) is not None
+    bonsai_addon._ensure_bonsai_bootstrap()  # already bootstrapped: no error
+
+
+def test_bonsai_addon_name_discovery():
+    finder = bonsai_addon._find_bonsai_addon_name
+    assert finder(["bl_ext.user_default.other", "bl_ext.bonsai_dev.bonsai"]) == "bl_ext.bonsai_dev.bonsai"
+    assert finder(["bl_ext.user_default.other"]) is None
+    assert finder([]) is None

@@ -5,6 +5,9 @@ The bpy surface is intentionally thin: a timer polls the local GUI server
 and hands payloads to an undoable operator (tool.Ifc.Operator); all IFC work
 goes through insert.py (pure ifcopenshell.api, CI-tested)."""
 
+# Imports are deliberately split: `bonsai.tool` must never be the first Bonsai
+# module imported (see _ensure_bonsai_bootstrap), so the import block resumes
+# after the bootstrap call.
 import atexit
 import os
 import shutil
@@ -14,6 +17,34 @@ import typing
 import webbrowser
 
 import bpy
+
+
+def _find_bonsai_addon_name(addon_names):
+    """Name of the enabled Bonsai extension, e.g. ``bl_ext.bonsai_dev.bonsai``."""
+    return next((name for name in addon_names if name.endswith(".bonsai")), None)
+
+
+def _ensure_bonsai_bootstrap():
+    """Import Bonsai's package entry point before its ``tool`` submodule.
+
+    Blender may enable this listener before Bonsai. Importing ``bonsai.tool``
+    first triggers a circular import inside Bonsai (its ``bim`` operators
+    subclass ``tool.Ifc.Operator`` while ``tool`` is still initialising).
+    ``bonsai.bim`` is the entry point Bonsai's own bootstrap imports, but it
+    needs ``REGISTERED_BBIM_PACKAGE`` — normally set by that bootstrap — so
+    discover the enabled extension name when it is missing."""
+    import bonsai
+
+    if getattr(bonsai, "REGISTERED_BBIM_PACKAGE", None):
+        return
+    name = _find_bonsai_addon_name(list(bpy.context.preferences.addons.keys()))
+    if name:
+        bonsai.REGISTERED_BBIM_PACKAGE = name
+    import bonsai.bim  # bootstrap import: must precede `bonsai.tool` (see docstring)
+
+
+_ensure_bonsai_bootstrap()
+
 from bonsai import tool
 
 from . import insert
